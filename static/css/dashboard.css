@@ -1,0 +1,61 @@
+body {
+  font-family: Arial, sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.newoauth, .oauthlist, .oauthentry {
+  width: calc(100% - 17.5vh);
+  margin-top: 7vh;
+  margin-left: 7vh;
+  margin-right: 7vh;
+  padding: 15px 10px 30px;
+  border-style: solid;
+  border-image: none;
+  border-radius: 8px;
+  border-width: 1px;
+  font-size: 17px;
+  background-color: rgb(235, 255, 235);
+}
+
+.oauthentry {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 5px;
+  background-color: lightcyan;
+}
+
+.oauthentry button {
+  padding: 10px;
+  background-color: red;
+  color: white
+}
+
+.oauthentry button:hover {
+  background-color: black;
+}
+
+button {
+  border: 1px solid black;
+  padding: 3px;
+  border-radius: 5px;
+  background-color: lightcyan;
+  transition: all 0.3s ease 0s;
+}
+
+button:hover {
+  background-color: white;
+}
+
+h {
+  display: block;
+  margin-top: 20px;
+  font-size: 20px;
+}
+
+input {
+  padding: 3px;
+  border-radius: 5px;
+  border: black solid 1px;
+}

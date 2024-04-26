@@ -1,0 +1,766 @@
+package main
+
+import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"io/ioutil"
+	"math/rand"
+	"net/url"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dgrijalva/jwt-go"
+	"github.com/gin-gonic/gin"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/spf13/viper"
+	"golang.org/x/crypto/scrypt"
+)
+
+const SALT_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func genSalt(length int) string {
+	if length <= 0 {
+		panic("Salt length must be at least 1.")
+	}
+
+	salt := make([]byte, length)
+	for i := range salt {
+		salt[i] = SALT_CHARS[rand.Intn(len(SALT_CHARS))]
+	}
+	return string(salt)
+}
+
+func sha256Base64(s string) string {
+	hashed := sha256.Sum256([]byte(s))
+	encoded := base64.URLEncoding.EncodeToString(hashed[:])
+	encoded = strings.TrimRight(encoded, "=")
+	return encoded
+}
+
+func hash(password, salt string) string {
+	passwordBytes := []byte(password)
+	saltBytes := []byte(salt)
+
+	derivedKey, _ := scrypt.Key(passwordBytes, saltBytes, 32768, 8, 1, 64)
+
+	hashString := fmt.Sprintf("scrypt:32768:8:1$%s$%s", salt, hex.EncodeToString(derivedKey))
+	return hashString
+}
+
+func verifyHash(werkzeughash, password string) bool {
+	parts := strings.Split(werkzeughash, "$")
+	if len(parts) != 3 || parts[0] != "scrypt:32768:8:1" {
+		return false
+	}
+	salt := parts[1]
+
+	computedHash := hash(password, salt)
+
+	return werkzeughash == computedHash
+}
+
+func get_db_connection() *sql.DB {
+	db, _ := sql.Open("sqlite3", "database.db")
+	return db
+}
+
+func get_user(id int) (string, string, string, bool) {
+	conn := get_db_connection()
+	defer conn.Close()
+	var created, username, password string
+	err := conn.QueryRow("SELECT created, username, password FROM users WHERE id = ? LIMIT 1", id).Scan(&created, &username, &password)
+	norows := false
+	if err != nil {
+		if err == sql.ErrNoRows {
+			norows = true
+		} else {
+			fmt.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		}
+	}
+
+	return created, username, password, norows
+}
+
+func get_user_from_session(session string) (int, bool) {
+	conn := get_db_connection()
+	defer conn.Close()
+	var id int
+	err := conn.QueryRow("SELECT id FROM sessions WHERE session = ? LIMIT 1", session).Scan(&id)
+	norows := false
+	if err != nil {
+		if err == sql.ErrNoRows {
+			norows = true
+		} else {
+			fmt.Println("[ERROR] Unknown in get_user_from_session() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		}
+	}
+
+	return id, norows
+}
+
+func check_username_taken(username string) (int, bool) {
+	conn := get_db_connection()
+	defer conn.Close()
+	var id int
+	err := conn.QueryRow("SELECT id FROM users WHERE lower(username) = ? LIMIT 1", username).Scan(&id)
+	norows := false
+	if err != nil {
+		if err == sql.ErrNoRows {
+			norows = true
+		} else {
+			fmt.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		}
+	}
+
+	return id, norows
+}
+
+func init_db() {
+	if _, err := os.Stat("database.db"); os.IsNotExist(err) {
+		if err := generateDB(); err != nil {
+			fmt.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			return
+		}
+	} else {
+		fmt.Print("Proceeding will overwrite the database. Proceed? (y/n) ")
+		var answer string
+		fmt.Scanln(&answer)
+		if answer == "y" || answer == "Y" {
+			if err := generateDB(); err != nil {
+				fmt.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		} else if answer == ":3" {
+			fmt.Println("[:3] :3")
+		} else {
+			fmt.Println("[INFO] Stopped")
+		}
+	}
+}
+
+func generateDB() error {
+	db, err := sql.Open("sqlite3", "database.db")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	schemaBytes, err := ioutil.ReadFile("schema.sql")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(string(schemaBytes))
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("[INFO] Generated database")
+	return nil
+}
+
+func main() {
+	if len(os.Args) > 1 {
+		if os.Args[1] == "init_db" {
+			init_db()
+			os.Exit(0)
+		}
+	}
+
+	if _, err := os.Stat("config.ini"); err == nil {
+		fmt.Println("[INFO] Config loaded at", time.Now().Unix())
+	} else if os.IsNotExist(err) {
+		fmt.Println("[FATAL] config.ini does not exist")
+		os.Exit(1)
+	} else {
+		fmt.Println("[FATAL] File is in quantumn uncertainty:", err)
+		os.Exit(1)
+	}
+
+	viper.SetConfigName("config")
+	viper.AddConfigPath("./")
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Println("[FATAL] Error in config file at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		os.Exit(1)
+	}
+
+	HOST := viper.GetString("config.HOST")
+	PORT := viper.GetInt("config.PORT")
+	SECRET_KEY := viper.GetString("config.SECRET_KEY")
+
+	if SECRET_KEY == "supersecretkey" {
+		fmt.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
+	}
+
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+
+	router.Static("/static", "./static")
+
+	router.LoadHTMLGlob("templates/*.html")
+
+	router.GET("/", func(c *gin.Context) {
+		c.Redirect(302, "/login")
+	})
+
+	router.GET("/login", func(c *gin.Context) {
+		c.HTML(200, "login.html", gin.H{})
+	})
+
+	router.GET("/signup", func(c *gin.Context) {
+		c.HTML(200, "signup.html", gin.H{})
+	})
+
+	router.GET("/logout", func(c *gin.Context) {
+		c.HTML(200, "logout.html", gin.H{})
+	})
+
+	router.GET("/app", func(c *gin.Context) {
+		c.HTML(200, "main.html", gin.H{})
+	})
+
+	router.GET("/dashboard", func(c *gin.Context) {
+		c.HTML(200, "dashboard.html", gin.H{})
+	})
+
+	router.GET("/.well-known/openid-configuration", func(c *gin.Context) {
+		c.HTML(200, "openid.html", gin.H{})
+	})
+
+	router.GET("/api/version", func(c *gin.Context) {
+		c.String(200, "Burgerauth Version 1.3")
+	})
+
+	router.POST("/api/signup", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		username := data["username"].(string)
+		password := data["password"].(string)
+
+		if username == "" || password == "" || len(username) > 20 || !regexp.MustCompile("^[a-zA-Z0-9]+$").MatchString(username) {
+			c.JSON(422, gin.H{"error": "Invalid username or password"})
+			return
+		}
+
+		_, norows := check_username_taken(username)
+
+		if !norows {
+			c.JSON(409, gin.H{"error": "Username taken"})
+			return
+		}
+
+		hashedPassword := hash(password, genSalt(16))
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		conn.Exec("INSERT INTO users (username, password, created) VALUES (?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10))
+		fmt.Println("[INFO] Added new user at", time.Now().Unix())
+
+		userid, _ := check_username_taken(username)
+
+		randomchars := genSalt(512)
+
+		conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomchars, userid, c.Request.Header.Get("User-Agent"))
+
+		c.JSON(200, gin.H{"key": randomchars})
+	})
+
+	router.POST("/api/login", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		username := data["username"].(string)
+		password := data["password"].(string)
+		passwordchange := data["password"].(string)
+		newpass := data["password"].(string)
+
+		userid, norows := check_username_taken(username)
+
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		_, _, userpassword, _ := get_user(userid)
+
+		if !verifyHash(userpassword, password) {
+			c.JSON(401, gin.H{"error": "Incorrect password"})
+			return
+		}
+
+		randomchars := genSalt(512)
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomchars, userid, c.Request.Header.Get("User-Agent"))
+
+		if passwordchange == "yes" {
+			hashpassword := hash(newpass, "")
+			conn.Exec("UPDATE users SET password = ? WHERE username = ?", hashpassword, username)
+		}
+
+		c.JSON(200, gin.H{"key": randomchars})
+	})
+
+	router.POST("/api/userinfo", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretkey := data["secretKey"].(string)
+
+		userid, norows := get_user_from_session(secretkey)
+
+		if norows {
+			c.JSON(400, gin.H{"error": "Session does not exist"})
+			return
+		}
+
+		created, username, _, norows := get_user(userid)
+
+		if norows {
+			c.JSON(400, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		c.JSON(200, gin.H{"username": username, "id": userid, "created": created})
+	})
+
+	router.GET("/userinfo", func(c *gin.Context) {
+		conn := get_db_connection()
+		defer conn.Close()
+		var userid int
+		conn.QueryRow("SELECT creator FROM logins WHERE code = ? LIMIT 1", strings.Fields(c.Request.Header["Authorization"][0])[1]).Scan(&userid)
+
+		_, username, _, norows := get_user(userid)
+
+		if norows {
+			c.JSON(400, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		c.JSON(200, gin.H{"sub": username, "name": username})
+	})
+
+	router.GET("/api/auth", func(c *gin.Context) {
+		secretKey, _ := c.Cookie("key")
+		appId := c.Request.URL.Query().Get("client_id")
+		code := c.Request.URL.Query().Get("code_challenge")
+		codemethod := c.Request.URL.Query().Get("code_challenge_method")
+		redirect_uri := c.Request.URL.Query().Get("redirect_uri")
+		state := c.Request.URL.Query().Get("state")
+
+		userid, norows := get_user_from_session(secretKey)
+
+		if norows {
+			c.String(400, "Session does not exist")
+			return
+		}
+
+		_, username, _, norows := get_user(userid)
+
+		if norows {
+			c.String(400, "User does not exist")
+			return
+		}
+
+		conn := get_db_connection()
+
+		var appidcheck, rdiruricheck string
+
+		conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
+
+		if !(rdiruricheck == url.QueryEscape(redirect_uri)) {
+			c.String(401, "Redirect URI does not match")
+			return
+		}
+
+		if !(appidcheck == appId) {
+			c.String(401, "OAuth screening failed")
+			return
+		}
+
+		datatemplate := jwt.MapClaims{
+			"sub":       username,
+			"iss":       "https://goauth.hectabit.org",
+			"name":      username,
+			"aud":       appId,
+			"exp":       time.Now().Unix() + 2592000,
+			"iat":       time.Now().Unix(),
+			"auth_time": time.Now().Unix(),
+			"nonce":     genSalt(512),
+		}
+
+		datatemplate2 := jwt.MapClaims{
+			"exp":   time.Now().Unix() + 2592000,
+			"iat":   time.Now().Unix(),
+			"nonce": genSalt(512),
+		}
+
+		jwt_token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, datatemplate).SignedString([]byte(SECRET_KEY))
+		secret_token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, datatemplate2).SignedString([]byte(SECRET_KEY))
+		randombytes := genSalt(512)
+
+		conn.Exec("INSERT INTO logins (appId, secret, nextsecret, code, nextcode, creator, openid, nextopenid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", appId, randombytes, "none", secret_token, "none", userid, jwt_token, "none", code, codemethod)
+
+		if randombytes != "" {
+			c.Redirect(302, redirect_uri+"?code="+randombytes+"&state="+state)
+		} else {
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: Secretkey not found.")
+			fmt.Println("[ERROR] Secretkey not found at", time.Now().Unix())
+		}
+	})
+
+	router.POST("/api/tokenauth", func(c *gin.Context) {
+		c.Request.ParseForm()
+		data := c.Request.Form
+
+		appId := data.Get("client_id")
+		code := data.Get("code")
+		code_verify := data.Get("code_verifier")
+		secret := data.Get("client_secret")
+
+		var verifycode bool
+		if code_verify == "" {
+			verifycode = true
+		} else {
+			verifycode = false
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		var appidcheck, secretcheck, openid, logincode, pkce, pkcemethod string
+
+		conn.QueryRow("SELECT o.appId, o.secret, l.openid, l.code, l.pkce, l.pkcemethod FROM oauth AS o JOIN logins AS l ON o.appId = l.appId WHERE o.appId = ? AND l.secret = ? LIMIT 1;", appId, code).Scan(&appidcheck, &secretcheck, &openid, &logincode, &pkce, &pkcemethod)
+		if appidcheck != appId {
+			c.JSON(401, gin.H{"error": "OAuth screening failed"})
+			return
+		}
+
+		if verifycode {
+			if pkce == "none" {
+				c.JSON(400, gin.H{"error": "Attempted PKCE exchange with non-PKCE authentication"})
+				return
+			} else {
+				if pkcemethod == "S256" {
+					if sha256Base64(code_verify) != pkce {
+						c.JSON(403, gin.H{"error": "Invalid PKCE code"})
+						return
+					}
+				} else if pkcemethod == "plain" {
+					if code_verify != pkce {
+						c.JSON(403, gin.H{"error": "Invalid PKCE code"})
+						return
+					}
+				} else {
+					c.JSON(403, gin.H{"error": "Attempted PKCE exchange without supported PKCE token method"})
+					return
+				}
+			}
+		} else {
+			if secret != secretcheck {
+				c.JSON(401, gin.H{"error": "Invalid secret"})
+				return
+			}
+		}
+
+		c.JSON(401, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+	})
+
+	router.POST("/api/deleteauth", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+		appId := data["appId"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+		_, err := conn.Exec("DELETE FROM oauth WHERE appId = ? AND creator = ?", appId, id)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(400, gin.H{"error": "AppID Not found"})
+			} else {
+				fmt.Println("[ERROR] Unknown in /api/deleteauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		} else {
+			c.JSON(200, gin.H{"success": "true"})
+		}
+	})
+
+	router.POST("/api/newauth", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+		appId := data["appId"].(string)
+		rdiruri := data["rdiruri"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(400, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		var testsecret string
+		secret := genSalt(512)
+		conn := get_db_connection()
+		defer conn.Close()
+
+		for {
+			err := conn.QueryRow("SELECT secret FROM oauth WHERE secret = ?", secret).Scan(&testsecret)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					break
+				} else {
+					fmt.Println("[ERROR] Unknown in /api/newauth secretselect at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					c.JSON(500, gin.H{"error": "Unknown error occured"})
+					return
+				}
+			} else {
+				secret = genSalt(512)
+			}
+		}
+
+		_, err := conn.Exec("SELECT secret FROM oauth WHERE appId = ?", appId)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				fmt.Println("[Info] New Oauth source added with ID:", appId)
+			} else {
+				fmt.Println("[ERROR] Unknown in /api/newauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+				return
+			}
+		} else {
+			secret = genSalt(512)
+		}
+
+		conn.Exec("INSERT INTO oauth (appId, creator, secret, rdiruri) VALUES (?, ?, ?, ?)", appId, id, secret, rdiruri)
+
+		c.JSON(200, gin.H{"key": secret})
+	})
+
+	router.POST("/api/listauth", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		rows, err := conn.Query("SELECT appId FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to query database"})
+			return
+		}
+		defer rows.Close()
+
+		var datatemplate []map[string]interface{}
+		for rows.Next() {
+			var appId string
+			if err := rows.Scan(&appId); err != nil {
+				c.JSON(500, gin.H{"error": "Failed to scan row"})
+				return
+			}
+			template := map[string]interface{}{"appId": appId}
+			datatemplate = append(datatemplate, template)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(500, gin.H{"error": "Error iterating over query results"})
+			return
+		}
+
+		c.JSON(200, datatemplate)
+	})
+
+	router.POST("/api/deleteaccount", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		_, err := conn.Exec("DELETE FROM userdata WHERE AND creator = ?", id)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/deleteuser userdata at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		}
+
+		_, err = conn.Exec("DELETE FROM logins WHERE creator = ?", id)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		}
+
+		_, err = conn.Exec("DELETE FROM oauth WHERE creator = ?", id)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/deleteuser oauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		}
+
+		_, err = conn.Exec("DELETE FROM users WHERE id = ?", id)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		}
+
+		c.JSON(200, gin.H{"success": "true"})
+	})
+
+	router.POST("/api/sessions/list", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+
+		rows, err := conn.Query("SELECT sessionid, session, device FROM sessions WHERE id = ? ORDER BY id DESC", id)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/sessions/list at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		}
+		defer rows.Close()
+
+		var datatemplate []map[string]interface{}
+		for rows.Next() {
+			var id, sessionid, device string
+			thisSession := false
+			if err := rows.Scan(&id, &sessionid, &device); err != nil {
+				c.JSON(500, gin.H{"error": "Failed to scan row"})
+				return
+			}
+			if sessionid == secretKey {
+				thisSession = true
+			}
+			template := map[string]interface{}{"id": sessionid, "thisSession": thisSession, "device": device}
+			datatemplate = append(datatemplate, template)
+		}
+		if err := rows.Err(); err != nil {
+			c.JSON(500, gin.H{"error": "Error iterating over query results"})
+			return
+		}
+
+		c.JSON(200, datatemplate)
+	})
+
+	router.POST("/api/sessions/remove", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		secretKey := data["secretKey"].(string)
+		sessionId := data["sessionId"].(string)
+
+		id, norows := get_user_from_session(secretKey)
+		if norows {
+			c.JSON(401, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		conn := get_db_connection()
+		defer conn.Close()
+		_, err := conn.Exec("DELETE FROM sessions WHERE sessionid = ? AND id = ?", sessionId, id)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(422, gin.H{"error": "SessionID Not found"})
+			} else {
+				fmt.Println("[ERROR] Unknown in /api/sessions/remove at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Unknown error occured"})
+			}
+		} else {
+			c.JSON(200, gin.H{"success": "true"})
+		}
+	})
+
+	router.POST("/api/listusers", func(c *gin.Context) {
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
+
+		masterkey := data["masterkey"].(string)
+
+		if masterkey == SECRET_KEY {
+			conn := get_db_connection()
+			defer conn.Close()
+
+			rows, err := conn.Query("SELECT * FROM users ORDER BY id DESC")
+			if err != nil {
+				if err != sql.ErrNoRows {
+					fmt.Println("[ERROR] Unknown in /api/listusers at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					c.JSON(500, gin.H{"error": "Unknown error occured"})
+				}
+			}
+			defer rows.Close()
+
+			var datatemplate []map[string]interface{}
+			for rows.Next() {
+				var id, username string
+				if err := rows.Scan(&id, &username); err != nil {
+					c.JSON(500, gin.H{"error": "Failed to scan row"})
+					return
+				}
+				template := map[string]interface{}{"id": id, "username": username}
+				datatemplate = append(datatemplate, template)
+			}
+			if err := rows.Err(); err != nil {
+				c.JSON(500, gin.H{"error": "Error iterating over query results"})
+				return
+			}
+
+			c.JSON(200, datatemplate)
+		}
+	})
+
+	fmt.Println("[INFO] Server started at", time.Now().Unix())
+	fmt.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + HOST + " on port " + strconv.Itoa(PORT) + ".")
+	router.Run(HOST + ":" + strconv.Itoa(PORT))
+}

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <link rel="stylesheet" href="/static/css/dashboard.css" media="">
+        <script src="/static/js/dashboard.js"></script>
+    </head>
+    <body>
+        <div class="newoauth">
+            <h>Submit a new OAuth2 App</h>
+            <p id="status"></p>
+            <p>AppID:</p>
+            <input id="appidbox">
+            <p>Redirect URI:</p>
+            <input id="rdiruribox">
+            <br>
+            <button style="margin-top: 10px;" onclick="attempt()">Submit</button>
+        </div>
+        <div class="oauthlist" id="oauthlist">
+            <h>Your existing apps</h>
+        </div>
+    </body>
+</html>
