@@ -11,8 +11,8 @@ if (localStorage.getItem("DONOTSHARE-password") !== null) {
 
 let remote = localStorage.getItem("homeserverURL")
 if (remote == null) {
-    localStorage.setItem("homeserverURL", "https://goauth.hectabit.org")
-    remote = "https://goauth.hectabit.org"
+    localStorage.setItem("homeserverURL", "https://auth.hectabit.org")
+    remote = "https://auth.hectabit.org"
 }
 
 let usernameBox = document.getElementById("usernameBox")

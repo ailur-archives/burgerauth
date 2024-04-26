@@ -5,8 +5,8 @@ if (localStorage.getItem("DONOTSHARE-secretkey") === null) {
 }
 let remote = localStorage.getItem("homeserverURL")
 if (remote == null) {
-    localStorage.setItem("homeserverURL", "https://goauth.hectabit.org")
-    remote = "https://goauth.hectabit.org"
+    localStorage.setItem("homeserverURL", "https://auth.hectabit.org")
+    remote = "https://auth.hectabit.org"
 }
 
 

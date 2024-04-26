@@ -392,7 +392,7 @@ func main() {
 
 		datatemplate := jwt.MapClaims{
 			"sub":       username,
-			"iss":       "https://goauth.hectabit.org",
+			"iss":       "https://auth.hectabit.org",
 			"name":      username,
 			"aud":       appId,
 			"exp":       time.Now().Unix() + 2592000,
