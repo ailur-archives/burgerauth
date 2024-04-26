@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -380,7 +379,7 @@ func main() {
 
 		conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
 
-		if !(rdiruricheck == url.QueryEscape(redirect_uri)) {
+		if !(rdiruricheck == redirect_uri) {
 			c.String(401, "Redirect URI does not match")
 			return
 		}
@@ -432,9 +431,9 @@ func main() {
 
 		var verifycode bool
 		if code_verify == "" {
-			verifycode = true
-		} else {
 			verifycode = false
+		} else {
+			verifycode = true
 		}
 
 		conn := get_db_connection()
@@ -475,7 +474,7 @@ func main() {
 			}
 		}
 
-		c.JSON(401, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
 	})
 
 	router.POST("/api/deleteauth", func(c *gin.Context) {
