@@ -1,13 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
-	"math/rand"
 	"os"
 	"regexp"
 	"strconv"
@@ -25,12 +24,18 @@ const SALT_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567
 
 func genSalt(length int) string {
 	if length <= 0 {
-		panic("Salt length must be at least 1.")
+		fmt.Println("[ERROR] Known in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", "Salt length must be at least one.")
 	}
 
 	salt := make([]byte, length)
+	randomBytes := make([]byte, length)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		fmt.Println("[ERROR] Unknown in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+	}
+
 	for i := range salt {
-		salt[i] = SALT_CHARS[rand.Intn(len(SALT_CHARS))]
+		salt[i] = SALT_CHARS[int(randomBytes[i])%len(SALT_CHARS)]
 	}
 	return string(salt)
 }
@@ -150,7 +155,7 @@ func generateDB() error {
 	}
 	defer db.Close()
 
-	schemaBytes, err := ioutil.ReadFile("schema.sql")
+	schemaBytes, err := os.ReadFile("schema.sql")
 	if err != nil {
 		return err
 	}
