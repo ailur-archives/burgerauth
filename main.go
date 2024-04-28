@@ -393,8 +393,8 @@ func main() {
 		}
 
 		session := claims["session"].(string)
-		exp := claims["exp"].(int64)
-		if exp < time.Now().Unix() {
+		exp := claims["exp"].(float64)
+		if int64(exp) < time.Now().Unix() {
 			c.JSON(403, gin.H{"error": "Expired token"})
 			return
 		}
@@ -456,8 +456,8 @@ func main() {
 		}
 
 		session := claims["session"].(string)
-		exp := claims["exp"].(int64)
-		if exp < time.Now().Unix() {
+		exp := claims["exp"].(float64)
+		if int64(exp) < time.Now().Unix() {
 			c.JSON(403, gin.H{"error": "Expired token"})
 			return
 		}
