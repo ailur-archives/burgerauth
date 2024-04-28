@@ -416,10 +416,10 @@ func main() {
 	})
 
 	router.POST("/api/uniqueid", func(c *gin.Context) {
-		c.Request.ParseForm()
-		data := c.Request.Form
+		var data map[string]interface{}
+		c.ShouldBindJSON(&data)
 
-		token := data.Get("access_token")
+		token := data["access_token"].(string)
 
 		conn := get_db_connection()
 		defer conn.Close()
