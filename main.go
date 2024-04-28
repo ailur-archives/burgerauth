@@ -58,8 +58,8 @@ func hash(password, salt string) string {
 	return hashString
 }
 
-func verifyHash(werkzeughash, password string) bool {
-	parts := strings.Split(werkzeughash, "$")
+func verifyHash(werkzeug_hash, password string) bool {
+	parts := strings.Split(werkzeug_hash, "$")
 	if len(parts) != 3 || parts[0] != "scrypt:32768:8:1" {
 		return false
 	}
@@ -67,7 +67,7 @@ func verifyHash(werkzeughash, password string) bool {
 
 	computedHash := hash(password, salt)
 
-	return werkzeughash == computedHash
+	return werkzeug_hash == computedHash
 }
 
 func get_db_connection() *sql.DB {
@@ -511,6 +511,35 @@ func main() {
 				return
 			}
 		}
+	})
+
+	router.POST("/api/loggedin", func(c *gin.Context) {
+		var data map[string]interface{}
+		err := c.ShouldBindJSON(&data)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		token := data["access_token"].(string)
+		conn := get_db_connection()
+		defer func(conn *sql.DB) {
+			err := conn.Close()
+			if err != nil {
+				fmt.Println("[ERROR] Unknown in /api/uniqueid defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			}
+		}(conn)
+		var blacklisted bool
+		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
+		if err == nil {
+			c.JSON(400, gin.H{"error": "Token is in blacklist"})
+			return
+		} else {
+			if !errors.Is(err, sql.ErrNoRows) {
+				fmt.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		}
 
 		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 			return []byte(SECRET_KEY), nil
@@ -539,25 +568,13 @@ func main() {
 			return
 		}
 
-		userid, norows := get_user_from_session(session)
+		_, norows := get_user_from_session(session)
 		if norows {
 			c.JSON(400, gin.H{"error": "Session does not exist"})
 			return
 		}
 
-		var uniqueid string
-		err = conn.QueryRow("SELECT uniqueid FROM users WHERE id = ? LIMIT 1", userid).Scan(&uniqueid)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				c.JSON(400, gin.H{"error": "User does not exist"})
-				return
-			} else {
-				fmt.Println("[ERROR] Unknown in /api/uniqueid fetch at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				return
-			}
-		}
-
-		c.JSON(200, gin.H{"uniqueid": uniqueid})
+		c.JSON(200, gin.H{"success": "true"})
 	})
 
 	router.GET("/api/auth", func(c *gin.Context) {
