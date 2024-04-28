@@ -40,7 +40,7 @@ CREATE TABLE logins (
 );
 
 CREATE TABLE blacklist (
-    oauth TEXT NOT NULL,
+    openid TEXT NOT NULL,
     blacklisted BOOLEAN NOT NULL DEFAULT true,
     token TEXT NOT NULL
 );
