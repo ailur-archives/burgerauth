@@ -8,7 +8,8 @@ CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created TEXT NOT NULL,
     username TEXT NOT NULL,
-    password TEXT NOT NULL
+    password TEXT NOT NULL,
+    uniqueid TEXT NOT NULL
 );
 
 CREATE TABLE userdata (
@@ -36,6 +37,12 @@ CREATE TABLE logins (
     pkce TEXT NOT NULL,
     pkcemethod TEXT NOT NULL
 );
+
+CREATE TABLE blacklist (
+    oauth TEXT NOT NULL,
+    blacklisted BOOLEAN NOT NULL DEFAULT true,
+    token TEXT NOT NULL
+)
 
 CREATE TABLE oauth (
     appId TEXT NOT NULL,

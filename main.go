@@ -267,7 +267,7 @@ func main() {
 		conn := get_db_connection()
 		defer conn.Close()
 
-		conn.Exec("INSERT INTO users (username, password, created) VALUES (?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10))
+		conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), genSalt(512))
 		fmt.Println("[INFO] Added new user at", time.Now().Unix())
 
 		userid, _ := check_username_taken(username)
@@ -341,10 +341,54 @@ func main() {
 	})
 
 	router.GET("/userinfo", func(c *gin.Context) {
+		token := strings.Fields(c.Request.Header["Authorization"][0])[1]
+
 		conn := get_db_connection()
 		defer conn.Close()
-		var userid int
-		conn.QueryRow("SELECT creator FROM logins WHERE code = ? LIMIT 1", strings.Fields(c.Request.Header["Authorization"][0])[1]).Scan(&userid)
+		var blacklisted bool
+		err := conn.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
+		if err == nil {
+			c.JSON(400, gin.H{"error": "Token is in blacklist"})
+			return
+		} else {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		}
+
+		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			return []byte(SECRET_KEY), nil
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Malformed token"})
+			return
+		}
+
+		var claims jwt.MapClaims
+		var ok bool
+
+		if parsedtoken.Valid {
+			claims, ok = parsedtoken.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(401, gin.H{"error": "Invalid token claims"})
+				return
+			}
+		}
+
+		session := claims["session"].(string)
+		exp := claims["exp"].(int64)
+		if exp < time.Now().Unix() {
+			c.JSON(403, gin.H{"error": "Expired token"})
+			return
+		}
+
+		userid, norows := get_user_from_session(session)
+		if norows {
+			c.JSON(400, gin.H{"error": "Session does not exist"})
+			return
+		}
 
 		_, username, _, norows := get_user(userid)
 
@@ -354,6 +398,74 @@ func main() {
 		}
 
 		c.JSON(200, gin.H{"sub": username, "name": username})
+	})
+
+	router.POST("/api/uniqueid", func(c *gin.Context) {
+		c.Request.ParseForm()
+		data := c.Request.Form
+
+		token := data.Get("access_token")
+
+		conn := get_db_connection()
+		defer conn.Close()
+		var blacklisted bool
+		err := conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
+		if err == nil {
+			c.JSON(400, gin.H{"error": "Token is in blacklist"})
+			return
+		} else {
+			if err != sql.ErrNoRows {
+				fmt.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		}
+
+		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			return []byte(SECRET_KEY), nil
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Malformed token"})
+			return
+		}
+
+		var claims jwt.MapClaims
+		var ok bool
+
+		if parsedtoken.Valid {
+			claims, ok = parsedtoken.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(401, gin.H{"error": "Invalid token claims"})
+				return
+			}
+		}
+
+		session := claims["session"].(string)
+		exp := claims["exp"].(int64)
+		if exp < time.Now().Unix() {
+			c.JSON(403, gin.H{"error": "Expired token"})
+			return
+		}
+
+		userid, norows := get_user_from_session(session)
+		if norows {
+			c.JSON(400, gin.H{"error": "Session does not exist"})
+			return
+		}
+
+		var uniqueid string
+		err = conn.QueryRow("SELECT uniqueid FROM users WHERE id = ? LIMIT 1", userid).Scan(&uniqueid)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(400, gin.H{"error": "User does not exist"})
+				return
+			} else {
+				fmt.Println("[ERROR] Unknown in /api/uniqueid fetch at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		}
+
+		c.JSON(200, gin.H{"uniqueid": uniqueid})
 	})
 
 	router.GET("/api/auth", func(c *gin.Context) {
@@ -402,13 +514,15 @@ func main() {
 			"exp":       time.Now().Unix() + 2592000,
 			"iat":       time.Now().Unix(),
 			"auth_time": time.Now().Unix(),
+			"session":   secretKey,
 			"nonce":     genSalt(512),
 		}
 
 		datatemplate2 := jwt.MapClaims{
-			"exp":   time.Now().Unix() + 2592000,
-			"iat":   time.Now().Unix(),
-			"nonce": genSalt(512),
+			"exp":     time.Now().Unix() + 2592000,
+			"iat":     time.Now().Unix(),
+			"session": secretKey,
+			"nonce":   genSalt(512),
 		}
 
 		jwt_token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, datatemplate).SignedString([]byte(SECRET_KEY))
@@ -478,6 +592,8 @@ func main() {
 				return
 			}
 		}
+
+		conn.Exec("DELETE FROM logins WHERE code = ?", logincode)
 
 		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
 	})
