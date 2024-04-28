@@ -42,7 +42,7 @@ CREATE TABLE blacklist (
     oauth TEXT NOT NULL,
     blacklisted BOOLEAN NOT NULL DEFAULT true,
     token TEXT NOT NULL
-)
+);
 
 CREATE TABLE oauth (
     appId TEXT NOT NULL,
