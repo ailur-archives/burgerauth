@@ -2,7 +2,7 @@
 window.addEventListener("message", function(event) {
     const access_token = event.data;
 
-    fetch("https://auth.hectabit.org/api/isloggedin", {
+    fetch("https://auth.hectabit.org/api/loggedin", {
         method: "POST",
         body: JSON.stringify({
             access_token: access_token
