@@ -1,28 +1,19 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-    <title>Login - Hectabit</title>
+    <title>Login - Burgerauth</title>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-    <link rel="stylesheet" type="text/css" href="../static/css/style.css" />
-    <script src="../static/js/hash-wasm.js"></script>
-    <link rel="icon" href="../static/svg/favicon.svg">
-    <script>
-    if (window.location.href.endsWith('/index.html')) {
-        if (window.location.origin !== null) {
-            var currentUrl = window.location.href;
-            var newUrl = currentUrl.replace('/index.html', '');
-            window.location.href = newUrl;
-        }
-    }
-    </script>
+    <link rel="stylesheet" type="text/css" href="/static/css/style.css" />
+    <script src="/static/js/hash-wasm.js"></script>
+    <link rel="icon" href="/static/svg/favicon.svg">
 </head>
 
 <body>
     <p class="credit">Image by perga (@pergagreen on discord)</p>
-    <img src="/static/img/background.jpg" class="background">
+    <img src="/static/img/background.jpg" class="background" alt="">
     <div class="inoutdiv">
         <h2 class="w300">Login</h2>
         <p id="statusBox"></p>
@@ -33,8 +24,8 @@
         <button id="backButton" class="hidden">Back</button>
         <br>
         <br>
-        <p>Don't have an account? If so, <a href="#" id="signuprdirButton">Create one here!</a></p>
-        <a href="#" id="privacyButton">Privacy &amp; Terms</a>
+        <p>Don't have an account? If so, <a href="/signup" id="signuprdirButton">Create one here!</a></p>
+        <a href="/privacy" id="privacyButton">Privacy &amp; Terms</a>
     </div>
 
     <script type="text/javascript" src="../static/js/login.js"></script>

@@ -1,22 +1,14 @@
-<html>
+<html lang="en">
 <head>
     <title>Authorize application</title>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-    <link rel="stylesheet" type="text/css" href="../static/css/style.css" media="">
-    <script src="../static/js/hash-wasm.js"></script>
-    <link rel="icon" href="../static/svg/favicon.svg">
+    <link rel="stylesheet" type="text/css" href="/static/css/style.css" media="">
+    <script src="/static/js/hash-wasm.js"></script>
+    <link rel="icon" href="/static/svg/favicon.svg">
     <script>
-        var client_id, redirect_uri, response_type, state, code, codemethod, secret_key, expires;
-
-        if (window.location.href.endsWith('/index.html')) {
-            if (window.location.origin !== null) {
-                var currentUrl = window.location.href;
-                var newUrl = currentUrl.replace('/index.html', '');
-                window.location.href = newUrl;
-            }
-        }
+        let client_id, redirect_uri, response_type, state, code, codemethod, secret_key, expires;
 
         if (localStorage.getItem("DONOTSHARE-secretkey") === null) {
             window.location.replace("/login" + window.location.search)
@@ -26,7 +18,7 @@
 
         document.addEventListener("DOMContentLoaded", function() {
             const urlParams = new URLSearchParams(window.location.search);
-            var statusBox = document.getElementById("statusBox");
+            const statusBox = document.getElementById("statusBox");
 
             // Get URL parameters
             if (urlParams.has('client_id')) {
@@ -52,8 +44,8 @@
 
             // Get DONOTSHARE-secretkey from localStorage
             secret_key = localStorage.getItem("DONOTSHARE-secretkey");
-            var now = new Date();
-            var expireTime = now.getTime() + (21 * 1000); // 21 seconds from now
+            const now = new Date();
+            const expireTime = now.getTime() + (21 * 1000); // 21 seconds from now
             expires = new Date(expireTime).toUTCString();
         });
 
@@ -68,14 +60,14 @@
 
 <body>
     <p class="credit">Image by perga (@pergagreen on discord)</p>
-    <img src="/static/img/background.jpg" class="background">
+    <img src="/static/img/background.jpg" class="background" alt="">
     <div class="inoutdiv">
         <h2 class="w300">Authorise Application</h2>
         <p id="statusBox">Loading...</p>
         <br>
         <div style="display: flex;justify-content: center;">
-            <button onclick="oauth();" style="margin: 0;width: 100%;margin-right: 2.5px;">Allow</button>
-            <button onclick="window.location.replace('https://www.hectabit.org');" style="margin: 0;width: 100%;margin-left: 2.5px;">Deny</button>
+            <button onclick="oauth();" style="width: 100%;margin: 0 3px 0 0;">Allow</button>
+            <button onclick="window.location.replace('https://www.hectabit.org');" style="width: 100%;margin: 0 0 0 3px;">Deny</button>
         </div>
     </div>
 </body>

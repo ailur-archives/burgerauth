@@ -1,25 +1,16 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-    <title>Burgernotes</title>
+    <title>Burgerauth</title>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <link rel="icon" href="../static/svg/favicon.svg">
-    <script>
-    if (window.location.href.endsWith('/index.html')) {
-        if (window.location.origin !== null) {
-            var currentUrl = window.location.href;
-            var newUrl = currentUrl.replace('/index.html', '');
-            window.location.href = newUrl;
-        }
-    }
-    </script>
-<head>
-Logging out..
+    <link rel="icon" href="/static/svg/favicon.svg">
+</head>
+<p>Logging out...</p>
 <script>
     localStorage.removeItem("DONOTSHARE-secretkey")
     localStorage.removeItem("DONOTSHARE-password")
     localStorage.removeItem("CACHE-username")
-    window.location.replace("../login")
+    window.location.replace("/login")
 </script>
