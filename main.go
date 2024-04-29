@@ -276,7 +276,7 @@ func main() {
 	})
 
 	router.GET("/aeskeyshare", func(c *gin.Context) {
-		c.HTML(200, "keyshare.html", gin.H{})
+		c.HTML(200, "aeskeyshare.html", gin.H{})
 	})
 
 	router.GET("/.well-known/openid-configuration", func(c *gin.Context) {
