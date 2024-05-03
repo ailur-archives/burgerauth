@@ -35,6 +35,12 @@ var (
 
 const salt_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+func addPadding(encodedString string) string {
+	paddingCount := 4 - (len(encodedString) % 4)
+	padding := strings.Repeat("=", paddingCount)
+	return encodedString + padding
+}
+
 func genSalt(length int) string {
 	if length <= 0 {
 		log.Println("[ERROR] Known in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", "Salt length must be at least one.")
@@ -871,7 +877,7 @@ func main() {
 			return
 		}
 
-		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": addPadding(openid)})
 	})
 
 	router.POST("/api/deleteauth", func(c *gin.Context) {
