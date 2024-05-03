@@ -27,8 +27,8 @@ import (
 )
 
 var (
-	privateKey []byte
-	publicKey  []byte
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
 	modulus    *big.Int
 	exponent   int
 )
@@ -248,17 +248,27 @@ func main() {
 		log.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
 	}
 
-	privateKey, err = os.ReadFile(PRIVATE_KEY_PATH)
+	privKeyFile, err := os.ReadFile(PRIVATE_KEY_PATH)
 	if err != nil {
 		log.Fatal("[ERROR] Cannot read private key:", err)
 	}
 
-	publicKey, err = os.ReadFile(PUBLIC_KEY_PATH)
+	block, _ := pem.Decode(privKeyFile)
+	if block == nil {
+		log.Fatal("[ERROR] Failed to parse PEM block containing the private key")
+	}
+
+	privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		log.Fatal("[ERROR] Failed to parse private key:", err)
+	}
+
+	pubKeyFile, err := os.ReadFile(PUBLIC_KEY_PATH)
 	if err != nil {
 		log.Fatal("[ERROR] Cannot read public key:", err)
 	}
 
-	block, _ := pem.Decode(publicKey)
+	block, _ = pem.Decode(pubKeyFile)
 	if block == nil {
 		log.Fatal("[ERROR] Failed to parse PEM block containing the public key")
 	}
@@ -268,13 +278,14 @@ func main() {
 		log.Fatal("[ERROR] Failed to parse public key:", err)
 	}
 
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	var ok bool
+	publicKey, ok = pubKey.(*rsa.PublicKey)
 	if !ok {
 		log.Fatal("[ERROR] Failed to convert public key to RSA public key")
 	}
 
-	modulus = rsaPubKey.N
-	exponent = rsaPubKey.E
+	modulus = publicKey.N
+	exponent = publicKey.E
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
