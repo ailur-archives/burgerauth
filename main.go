@@ -258,9 +258,15 @@ func main() {
 		log.Fatal("[ERROR] Failed to parse PEM block containing the private key")
 	}
 
-	privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	privKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		log.Fatal("[ERROR] Failed to parse private key:", err)
+	}
+
+	var ok bool
+	privateKey, ok = privKey.(*rsa.PrivateKey)
+	if !ok {
+		log.Fatal("[ERROR] Failed to convert private key to RSA private key")
 	}
 
 	pubKeyFile, err := os.ReadFile(PUBLIC_KEY_PATH)
@@ -278,7 +284,6 @@ func main() {
 		log.Fatal("[ERROR] Failed to parse public key:", err)
 	}
 
-	var ok bool
 	publicKey, ok = pubKey.(*rsa.PublicKey)
 	if !ok {
 		log.Fatal("[ERROR] Failed to convert public key to RSA public key")
