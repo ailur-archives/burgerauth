@@ -2,12 +2,17 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
+	"math/big"
 	"os"
 	"regexp"
 	"strconv"
@@ -21,18 +26,25 @@ import (
 	"golang.org/x/crypto/scrypt"
 )
 
+var (
+	privateKey []byte
+	publicKey  []byte
+	modulus    *big.Int
+	exponent   int
+)
+
 const salt_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 func genSalt(length int) string {
 	if length <= 0 {
-		fmt.Println("[ERROR] Known in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", "Salt length must be at least one.")
+		log.Println("[ERROR] Known in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", "Salt length must be at least one.")
 	}
 
 	salt := make([]byte, length)
 	randomBytes := make([]byte, length)
 	_, err := rand.Read(randomBytes)
 	if err != nil {
-		fmt.Println("[ERROR] Unknown in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		log.Println("[ERROR] Unknown in genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 	}
 
 	for i := range salt {
@@ -75,44 +87,46 @@ func get_db_connection() *sql.DB {
 	return db
 }
 
-func get_user(id int) (string, string, string, bool) {
+func get_user(id int) (string, string, string, string, bool) {
+	norows := false
 	conn := get_db_connection()
 	defer func(conn *sql.DB) {
 		err := conn.Close()
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in get_user() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in get_user() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			norows = true
 		}
 	}(conn)
-	var created, username, password string
-	err := conn.QueryRow("SELECT created, username, password FROM users WHERE id = ? LIMIT 1", id).Scan(&created, &username, &password)
-	norows := false
+	var created, username, password, uniqueid string
+	err := conn.QueryRow("SELECT created, username, uniqueid, password FROM users WHERE id = ? LIMIT 1", id).Scan(&created, &username, &uniqueid, &password)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			norows = true
 		} else {
-			fmt.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 		}
 	}
 
-	return created, username, password, norows
+	return created, username, password, uniqueid, norows
 }
 
 func get_user_from_session(session string) (int, bool) {
+	norows := false
 	conn := get_db_connection()
 	defer func(conn *sql.DB) {
 		err := conn.Close()
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in get_user_from_session() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in get_user_from_session() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			norows = true
 		}
 	}(conn)
 	var id int
 	err := conn.QueryRow("SELECT id FROM sessions WHERE session = ? LIMIT 1", session).Scan(&id)
-	norows := false
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			norows = true
 		} else {
-			fmt.Println("[ERROR] Unknown in get_user_from_session() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in get_user_from_session() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 		}
 	}
 
@@ -120,21 +134,22 @@ func get_user_from_session(session string) (int, bool) {
 }
 
 func check_username_taken(username string) (int, bool) {
+	norows := false
 	conn := get_db_connection()
 	defer func(conn *sql.DB) {
 		err := conn.Close()
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in check_username_taken() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in check_username_taken() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			norows = true
 		}
 	}(conn)
 	var id int
 	err := conn.QueryRow("SELECT id FROM users WHERE lower(username) = ? LIMIT 1", username).Scan(&id)
-	norows := false
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			norows = true
 		} else {
-			fmt.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in get_user() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 		}
 	}
 
@@ -144,26 +159,26 @@ func check_username_taken(username string) (int, bool) {
 func init_db() {
 	if _, err := os.Stat("database.db"); os.IsNotExist(err) {
 		if err := generateDB(); err != nil {
-			fmt.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 	} else {
-		fmt.Print("Proceeding will overwrite the database. Proceed? (y/n) ")
+		log.Print("Proceeding will overwrite the database. Proceed? (y/n) ")
 		var answer string
 		_, err := fmt.Scanln(&answer)
 		if err != nil {
-			fmt.Println("[ERROR] Unknown while scanning input at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown while scanning input at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 		if answer == "y" || answer == "Y" {
 			if err := generateDB(); err != nil {
-				fmt.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				return
 			}
 		} else if answer == ":3" {
-			fmt.Println("[:3] :3")
+			log.Println("[:3] :3")
 		} else {
-			fmt.Println("[INFO] Stopped")
+			log.Println("[INFO] Stopped")
 		}
 	}
 }
@@ -176,7 +191,8 @@ func generateDB() error {
 	defer func(db *sql.DB) {
 		err := db.Close()
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in generateDB() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in generateDB() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			return
 		}
 	}(db)
 
@@ -190,7 +206,7 @@ func generateDB() error {
 		return err
 	}
 
-	fmt.Println("[INFO] Generated database")
+	log.Println("[INFO] Generated database")
 	return nil
 }
 
@@ -203,12 +219,12 @@ func main() {
 	}
 
 	if _, err := os.Stat("config.ini"); err == nil {
-		fmt.Println("[INFO] Config loaded at", time.Now().Unix())
+		log.Println("[INFO] Config loaded at", time.Now().Unix())
 	} else if os.IsNotExist(err) {
-		fmt.Println("[FATAL] config.ini does not exist")
+		log.Println("[FATAL] config.ini does not exist")
 		os.Exit(1)
 	} else {
-		fmt.Println("[FATAL] File is in quantumn uncertainty:", err)
+		log.Println("[FATAL] File is in quantumn uncertainty:", err)
 		os.Exit(1)
 	}
 
@@ -216,18 +232,49 @@ func main() {
 	viper.AddConfigPath("./")
 	viper.AutomaticEnv()
 
-	if err := viper.ReadInConfig(); err != nil {
-		fmt.Println("[FATAL] Error in config file at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+	err := viper.ReadInConfig()
+	if err != nil {
+		log.Println("[FATAL] Error in config file at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 		os.Exit(1)
 	}
 
 	HOST := viper.GetString("config.HOST")
 	PORT := viper.GetInt("config.PORT")
 	SECRET_KEY := viper.GetString("config.SECRET_KEY")
+	PUBLIC_KEY_PATH := viper.GetString("config.PUBLIC_KEY")
+	PRIVATE_KEY_PATH := viper.GetString("config.PRIVATE_KEY")
 
 	if SECRET_KEY == "supersecretkey" {
-		fmt.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
+		log.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
 	}
+
+	privateKey, err = os.ReadFile(PRIVATE_KEY_PATH)
+	if err != nil {
+		log.Fatal("[ERROR] Cannot read private key:", err)
+	}
+
+	publicKey, err = os.ReadFile(PUBLIC_KEY_PATH)
+	if err != nil {
+		log.Fatal("[ERROR] Cannot read public key:", err)
+	}
+
+	block, _ := pem.Decode(publicKey)
+	if block == nil {
+		log.Fatal("[ERROR] Failed to parse PEM block containing the public key")
+	}
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Fatal("[ERROR] Failed to parse public key:", err)
+	}
+
+	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		log.Fatal("[ERROR] Failed to convert public key to RSA public key")
+	}
+
+	modulus = rsaPubKey.N
+	exponent = rsaPubKey.E
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -316,16 +363,18 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/signup defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/signup defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
 		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), genSalt(512))
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/signup user creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup user creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
-		fmt.Println("[INFO] Added new user at", time.Now().Unix())
+		log.Println("[INFO] Added new user at", time.Now().Unix())
 
 		userid, _ := check_username_taken(username)
 
@@ -333,7 +382,7 @@ func main() {
 
 		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomchars, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/signup session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 
@@ -360,7 +409,7 @@ func main() {
 			return
 		}
 
-		_, _, userpassword, _ := get_user(userid)
+		_, _, userpassword, _, _ := get_user(userid)
 
 		if !verifyHash(userpassword, password) {
 			c.JSON(401, gin.H{"error": "Incorrect password"})
@@ -373,13 +422,15 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/login defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/login defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
 		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomchars, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/login session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/login session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 
@@ -387,7 +438,7 @@ func main() {
 			hashpassword := hash(newpass, "")
 			_, err = conn.Exec("UPDATE users SET password = ? WHERE username = ?", hashpassword, username)
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/login password change at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/login password change at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				return
 			}
 		}
@@ -412,7 +463,7 @@ func main() {
 			return
 		}
 
-		created, username, _, norows := get_user(userid)
+		created, username, _, _, norows := get_user(userid)
 
 		if norows {
 			c.JSON(400, gin.H{"error": "User does not exist"})
@@ -429,7 +480,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /userinfo defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /userinfo defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 		var blacklisted bool
@@ -439,13 +492,13 @@ func main() {
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				return
 			}
 		}
 
 		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-			return []byte(SECRET_KEY), nil
+			return publicKey, nil
 		})
 
 		if err != nil {
@@ -477,14 +530,16 @@ func main() {
 			return
 		}
 
-		_, username, _, norows := get_user(userid)
+		_, username, _, uniqueid, norows := get_user(userid)
 
 		if norows {
 			c.JSON(400, gin.H{"error": "User does not exist"})
 			return
 		}
 
-		c.JSON(200, gin.H{"sub": username, "name": username})
+		user := gin.H{"name": username}
+
+		c.JSON(200, gin.H{"sub": uniqueid, "user": user})
 	})
 
 	router.POST("/api/uniqueid", func(c *gin.Context) {
@@ -501,7 +556,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/uniqueid defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/uniqueid defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 		var blacklisted bool
@@ -511,10 +568,51 @@ func main() {
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				return
 			}
 		}
+
+		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			return publicKey, nil
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Malformed token"})
+			return
+		}
+
+		var claims jwt.MapClaims
+		var ok bool
+
+		if parsedtoken.Valid {
+			claims, ok = parsedtoken.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(401, gin.H{"error": "Invalid token claims"})
+				return
+			}
+		}
+
+		session := claims["session"].(string)
+		exp := claims["exp"].(float64)
+		if int64(exp) < time.Now().Unix() {
+			c.JSON(403, gin.H{"error": "Expired token"})
+			return
+		}
+
+		userid, norows := get_user_from_session(session)
+		if norows {
+			c.JSON(400, gin.H{"error": "Session does not exist"})
+			return
+		}
+
+		_, _, _, uniqueid, norows := get_user(userid)
+		if norows {
+			c.JSON(400, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		c.JSON(200, gin.H{"uniqueid": uniqueid})
 	})
 
 	router.POST("/api/loggedin", func(c *gin.Context) {
@@ -530,7 +628,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/uniqueid defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/uniqueid defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 		var blacklisted bool
@@ -540,13 +640,13 @@ func main() {
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/uniqueid blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				return
 			}
 		}
 
 		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-			return []byte(SECRET_KEY), nil
+			return publicKey, nil
 		})
 
 		if err != nil {
@@ -596,7 +696,7 @@ func main() {
 			return
 		}
 
-		_, username, _, norows := get_user(userid)
+		_, username, _, _, norows := get_user(userid)
 
 		if norows {
 			c.String(400, "User does not exist")
@@ -612,7 +712,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.String(401, "OAuth screening failed")
 			} else {
-				fmt.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			}
 			return
 		}
@@ -646,21 +746,33 @@ func main() {
 			"nonce":   genSalt(512),
 		}
 
-		jwt_token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, datatemplate).SignedString([]byte(SECRET_KEY))
-		secret_token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, datatemplate2).SignedString([]byte(SECRET_KEY))
+		jwt_token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate).SignedString(privateKey)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: jwt_token_cannotsign.")
+			return
+		}
+		secret_token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate2).SignedString(privateKey)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: jwt_token_cannotsign_secret.")
+			return
+		}
+
 		randombytes := genSalt(512)
 
 		_, err = conn.Exec("INSERT INTO logins (appId, secret, nextsecret, code, nextcode, creator, openid, nextopenid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", appId, randombytes, "none", secret_token, "none", userid, jwt_token, "none", code, codemethod)
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_insert_auth.")
 			return
 		}
 
 		if randombytes != "" {
 			c.Redirect(302, redirect_uri+"?code="+randombytes+"&state="+state)
 		} else {
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: Secretkey not found.")
-			fmt.Println("[ERROR] Secretkey not found at", strconv.FormatInt(time.Now().Unix(), 10))
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: secretkey_not_found.")
+			log.Println("[ERROR] Secretkey not found at", strconv.FormatInt(time.Now().Unix(), 10))
 		}
 	})
 
@@ -688,7 +800,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/tokenauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/tokenauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
@@ -699,7 +813,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
-				fmt.Println("[ERROR] Unknown in /api/tokenauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/tokenauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			}
 			return
 		}
@@ -737,7 +851,7 @@ func main() {
 
 		_, err = conn.Exec("DELETE FROM logins WHERE code = ?", logincode)
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 
@@ -765,7 +879,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/deleteauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 		_, err = conn.Exec("DELETE FROM oauth WHERE appId = ? AND creator = ?", appId, id)
@@ -773,7 +889,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(400, gin.H{"error": "AppID Not found"})
 			} else {
-				fmt.Println("[ERROR] Unknown in /api/deleteauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		} else {
@@ -805,7 +921,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/newauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/newauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
@@ -815,7 +933,7 @@ func main() {
 				if errors.Is(err, sql.ErrNoRows) {
 					break
 				} else {
-					fmt.Println("[ERROR] Unknown in /api/newauth secretselect at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/newauth secretselect at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 					c.JSON(500, gin.H{"error": "Unknown error occured"})
 					return
 				}
@@ -827,9 +945,9 @@ func main() {
 		_, err = conn.Exec("SELECT secret FROM oauth WHERE appId = ?", appId)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[Info] New Oauth source added with ID:", appId)
+				log.Println("[Info] New Oauth source added with ID:", appId)
 			} else {
-				fmt.Println("[ERROR] Unknown in /api/newauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/newauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 				return
 			}
@@ -839,7 +957,7 @@ func main() {
 
 		_, err = conn.Exec("INSERT INTO oauth (appId, creator, secret, rdiruri) VALUES (?, ?, ?, ?)", appId, id, secret, rdiruri)
 		if err != nil {
-			fmt.Println("[ERROR] Unknown in /api/newauth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/newauth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 
@@ -866,7 +984,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/listauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/listauth defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
@@ -878,7 +998,7 @@ func main() {
 		defer func(rows *sql.Rows) {
 			err := rows.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/listauth rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/listauth rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			}
 		}(rows)
 
@@ -920,14 +1040,16 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/deleteaccount defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteaccount defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
 		_, err = conn.Exec("DELETE FROM userdata WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/deleteuser userdata at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser userdata at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		}
@@ -935,7 +1057,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM logins WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		}
@@ -943,7 +1065,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM oauth WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/deleteuser oauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser oauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		}
@@ -951,7 +1073,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM users WHERE id = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		}
@@ -979,21 +1101,23 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/sessions/list defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/list defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 
 		rows, err := conn.Query("SELECT sessionid, session, device FROM sessions WHERE id = ? ORDER BY id DESC", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				fmt.Println("[ERROR] Unknown in /api/sessions/list at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/list at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		}
 		defer func(rows *sql.Rows) {
 			err := rows.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/sessions/list rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/list rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			}
 		}(rows)
 
@@ -1040,7 +1164,9 @@ func main() {
 		defer func(conn *sql.DB) {
 			err := conn.Close()
 			if err != nil {
-				fmt.Println("[ERROR] Unknown in /api/sessions/remove defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/remove defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
 			}
 		}(conn)
 		_, err = conn.Exec("DELETE FROM sessions WHERE sessionid = ? AND id = ?", sessionId, id)
@@ -1048,7 +1174,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(422, gin.H{"error": "SessionID Not found"})
 			} else {
-				fmt.Println("[ERROR] Unknown in /api/sessions/remove at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/remove at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Unknown error occured"})
 			}
 		} else {
@@ -1071,21 +1197,23 @@ func main() {
 			defer func(conn *sql.DB) {
 				err := conn.Close()
 				if err != nil {
-					fmt.Println("[ERROR] Unknown in /api/listusers defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/listusers defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+					return
 				}
 			}(conn)
 
 			rows, err := conn.Query("SELECT * FROM users ORDER BY id DESC")
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
-					fmt.Println("[ERROR] Unknown in /api/listusers at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/listusers at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 					c.JSON(500, gin.H{"error": "Unknown error occured"})
 				}
 			}
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
 				if err != nil {
-					fmt.Println("[ERROR] Unknown in /api/listusers rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/listusers rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				}
 			}(rows)
 
@@ -1108,11 +1236,28 @@ func main() {
 		}
 	})
 
-	fmt.Println("[INFO] Server started at", time.Now().Unix())
-	fmt.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + HOST + " on port " + strconv.Itoa(PORT) + ".")
-	err := router.Run(HOST + ":" + strconv.Itoa(PORT))
+	router.GET("/.well-known/jwks.json", func(c *gin.Context) {
+		keys := gin.H{
+			"keys": []gin.H{
+				{
+					"kty": "RSA",
+					"alg": "RS256",
+					"use": "sig",
+					"kid": "burgerauth",
+					"n":   modulus,
+					"e":   exponent,
+				},
+			},
+		}
+
+		c.JSON(200, keys)
+	})
+
+	log.Println("[INFO] Server started at", time.Now().Unix())
+	log.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + HOST + " on port " + strconv.Itoa(PORT) + ".")
+	err = router.Run(HOST + ":" + strconv.Itoa(PORT))
 	if err != nil {
-		fmt.Println("[FATAL] Server failed to start at", time.Now().Unix(), err)
+		log.Println("[FATAL] Server failed to start at", time.Now().Unix(), err)
 		return
 	}
 }
