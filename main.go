@@ -302,8 +302,8 @@ func main() {
 		log.Fatal("[ERROR] Failed to convert public key to RSA public key")
 	}
 
-	modulus = publicKey.N
-	exponent = publicKey.E
+	modulus = privateKey.N
+	exponent = privateKey.E
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
