@@ -768,7 +768,7 @@ func main() {
 			return
 		}
 
-		if nonce == "" {
+		if nonce == "none" {
 			nonce = genSalt(512)
 		}
 

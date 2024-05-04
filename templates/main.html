@@ -8,7 +8,7 @@
     <script src="/static/js/hash-wasm.js"></script>
     <link rel="icon" href="/static/svg/favicon.svg">
     <script>
-        let client_id, redirect_uri, response_type, state, code, codemethod, secret_key, expires;
+        let client_id, redirect_uri, response_type, state, code, codemethod, secret_key, expires, nonce;
 
         if (localStorage.getItem("DONOTSHARE-secretkey") === null) {
             window.location.replace("/login" + window.location.search)
@@ -42,6 +42,12 @@
                 codemethod = "none";
             }
 
+            if (urlParams.has('nonce')) {
+                nonce = urlParams.get('nonce');
+            } else {
+                nonce = "none";
+            }
+
             // Get DONOTSHARE-secretkey from localStorage
             secret_key = localStorage.getItem("DONOTSHARE-secretkey");
             const now = new Date();
@@ -53,7 +59,7 @@
             document.cookie = "key=" + secret_key + "; expires=" + expires + "; path=/";
 
             // Send data to example.org using POST request
-            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state);
+            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce);
         }
     </script>
 </head>
