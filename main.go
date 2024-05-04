@@ -577,7 +577,7 @@ func main() {
 			return
 		}
 
-		user := gin.H{"name": username}
+		user := gin.H{"name": username, "sub": uniqueid}
 
 		c.JSON(200, gin.H{"sub": uniqueid, "user": user})
 	})
