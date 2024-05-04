@@ -2,3 +2,4 @@ config.ini
 database.db
 burgerauth
 .idea
+keys/
