@@ -775,13 +775,18 @@ func main() {
 			"nonce":   genSalt(512),
 		}
 
-		jwt_token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate).SignedString(privateKey)
+		tokentemp := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate)
+		tokentemp.Header["kid"] = "burgerauth"
+		jwt_token, err := tokentemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: jwt_token_cannotsign.")
 			return
 		}
-		secret_token, err := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate2).SignedString(privateKey)
+
+		secrettemp := jwt.NewWithClaims(jwt.SigningMethodRS256, datatemplate2)
+		secrettemp.Header["kid"] = "burgerauth"
+		secret_token, err := secrettemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: jwt_token_cannotsign_secret.")
