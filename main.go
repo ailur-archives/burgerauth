@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -33,13 +34,19 @@ var (
 	exponent   int
 )
 
-const salt_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-func addPadding(encodedString string) string {
-	paddingCount := 4 - (len(encodedString) % 4)
-	padding := strings.Repeat("=", paddingCount)
-	return encodedString + padding
+func Int64ToBase64(num int64) (string, error) {
+	numBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(numBytes, uint64(num))
+	startIndex := 0
+	for startIndex < len(numBytes) && numBytes[startIndex] == 0 {
+		startIndex++
+	}
+	trimmedBytes := numBytes[startIndex:]
+	encoded := base64.StdEncoding.EncodeToString(trimmedBytes)
+	return encoded, nil
 }
+
+const salt_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 func genSalt(length int) string {
 	if length <= 0 {
@@ -877,7 +884,7 @@ func main() {
 			return
 		}
 
-		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": addPadding(openid)})
+		c.JSON(200, gin.H{"access_token": logincode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
 	})
 
 	router.POST("/api/deleteauth", func(c *gin.Context) {
@@ -1259,6 +1266,19 @@ func main() {
 	})
 
 	router.GET("/.well-known/jwks.json", func(c *gin.Context) {
+		mod, err := Int64ToBase64(modulus.Int64())
+		if err != nil {
+			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.JSON(500, gin.H{"error": "Unknown error occured"})
+			return
+		}
+
+		exp, err := Int64ToBase64(int64(exponent))
+		if err != nil {
+			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.JSON(500, gin.H{"error": "Unknown error occured"})
+			return
+		}
 		keys := gin.H{
 			"keys": []gin.H{
 				{
@@ -1266,8 +1286,8 @@ func main() {
 					"alg": "RS256",
 					"use": "sig",
 					"kid": "burgerauth",
-					"n":   modulus,
-					"e":   exponent,
+					"n":   mod,
+					"e":   exp,
 				},
 			},
 		}
