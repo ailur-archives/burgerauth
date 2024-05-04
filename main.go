@@ -577,9 +577,7 @@ func main() {
 			return
 		}
 
-		user := gin.H{"name": username, "sub": uniqueid}
-
-		c.JSON(200, gin.H{"sub": uniqueid, "user": user})
+		c.JSON(200, gin.H{"sub": uniqueid, "name": username})
 	})
 
 	router.POST("/api/uniqueid", func(c *gin.Context) {
@@ -737,7 +735,7 @@ func main() {
 			return
 		}
 
-		_, username, _, _, norows := get_user(userid)
+		_, username, _, uniqueid, norows := get_user(userid)
 
 		if norows {
 			c.String(400, "User does not exist")
@@ -773,7 +771,7 @@ func main() {
 		}
 
 		datatemplate := jwt.MapClaims{
-			"sub":       username,
+			"sub":       uniqueid,
 			"iss":       "https://auth.hectabit.org",
 			"name":      username,
 			"aud":       appId,
