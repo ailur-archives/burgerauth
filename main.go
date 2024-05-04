@@ -34,7 +34,7 @@ var (
 	exponent   int
 )
 
-func Int64ToBase64(num int64) (string, error) {
+func Int64ToBase64URL(num int64) (string, error) {
 	numBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(numBytes, uint64(num))
 	startIndex := 0
@@ -42,7 +42,18 @@ func Int64ToBase64(num int64) (string, error) {
 		startIndex++
 	}
 	trimmedBytes := numBytes[startIndex:]
-	encoded := base64.StdEncoding.EncodeToString(trimmedBytes)
+	encoded := base64.URLEncoding.EncodeToString(trimmedBytes)
+	return encoded, nil
+}
+
+func BigIntToBase64URL(num *big.Int) (string, error) {
+	numBytes := num.Bytes()
+	startIndex := 0
+	for startIndex < len(numBytes) && numBytes[startIndex] == 0 {
+		startIndex++
+	}
+	trimmedBytes := numBytes[startIndex:]
+	encoded := base64.URLEncoding.EncodeToString(trimmedBytes)
 	return encoded, nil
 }
 
@@ -1271,14 +1282,14 @@ func main() {
 	})
 
 	router.GET("/.well-known/jwks.json", func(c *gin.Context) {
-		mod, err := Int64ToBase64(modulus.Int64())
+		mod, err := BigIntToBase64URL(modulus)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.JSON(500, gin.H{"error": "Unknown error occured"})
 			return
 		}
 
-		exp, err := Int64ToBase64(int64(exponent))
+		exp, err := Int64ToBase64URL(int64(exponent))
 		if err != nil {
 			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.JSON(500, gin.H{"error": "Unknown error occured"})
