@@ -728,6 +728,7 @@ func main() {
 		codemethod := c.Request.URL.Query().Get("code_challenge_method")
 		redirect_uri := c.Request.URL.Query().Get("redirect_uri")
 		state := c.Request.URL.Query().Get("state")
+		nonce := c.Request.URL.Query().Get("nonce")
 
 		userid, norows := get_user_from_session(secretKey)
 
@@ -767,6 +768,10 @@ func main() {
 			return
 		}
 
+		if nonce == "" {
+			nonce = genSalt(512)
+		}
+
 		datatemplate := jwt.MapClaims{
 			"sub":       username,
 			"iss":       "https://auth.hectabit.org",
@@ -776,7 +781,7 @@ func main() {
 			"iat":       time.Now().Unix(),
 			"auth_time": time.Now().Unix(),
 			"session":   secretKey,
-			"nonce":     genSalt(512),
+			"nonce":     nonce,
 		}
 
 		datatemplate2 := jwt.MapClaims{
