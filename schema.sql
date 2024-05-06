@@ -49,5 +49,6 @@ CREATE TABLE oauth (
     appId TEXT NOT NULL,
     secret TEXT NOT NULL,
     creator INTEGER NOT NULL,
-    rdiruri TEXT NOT NULL
+    rdiruri TEXT NOT NULL,
+    name TEXT NOT NULL
 )

@@ -355,7 +355,28 @@ func main() {
 	})
 
 	router.GET("/app", func(c *gin.Context) {
-		c.HTML(200, "main.html", gin.H{})
+		conn := get_db_connection()
+		defer func(conn *sql.DB) {
+			err := conn.Close()
+			if err != nil {
+				log.Println("[ERROR] Unknown in /app defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
+			}
+		}(conn)
+
+		appId := c.Request.URL.Query().Get("client_id")
+		var name string
+		err := conn.QueryRow("SELECT name FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&name)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.String(404, "App not found")
+			} else {
+				log.Println("[ERROR] Unknown in /app at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			}
+			return
+		}
+		c.HTML(200, "main.html", gin.H{"name": name})
 	})
 
 	router.GET("/dashboard", func(c *gin.Context) {
@@ -954,7 +975,7 @@ func main() {
 		}
 
 		secretKey := data["secretKey"].(string)
-		appId := data["appId"].(string)
+		name := data["name"].(string)
 		rdiruri := data["rdiruri"].(string)
 
 		id, norows := get_user_from_session(secretKey)
@@ -963,7 +984,7 @@ func main() {
 			return
 		}
 
-		var testsecret string
+		var testsecret, testappid string
 		secret := genSalt(512)
 		conn := get_db_connection()
 		defer func(conn *sql.DB) {
@@ -990,26 +1011,30 @@ func main() {
 			}
 		}
 
-		_, err = conn.Exec("SELECT secret FROM oauth WHERE appId = ?", appId)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				log.Println("[Info] New Oauth source added with ID:", appId)
+		appId := genSalt(32)
+		for {
+			err = conn.QueryRow("SELECT appId FROM oauth WHERE appId = ?", appId).Scan(&testappid)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					log.Println("[Info] New Oauth source added with ID:", appId)
+					break
+				} else {
+					log.Println("[ERROR] Unknown in /api/newauth appidcheck at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					c.JSON(500, gin.H{"error": "Unknown error occured"})
+					return
+				}
 			} else {
-				log.Println("[ERROR] Unknown in /api/newauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Unknown error occured"})
-				return
+				appId = genSalt(32)
 			}
-		} else {
-			secret = genSalt(512)
 		}
 
-		_, err = conn.Exec("INSERT INTO oauth (appId, creator, secret, rdiruri) VALUES (?, ?, ?, ?)", appId, id, secret, rdiruri)
+		_, err = conn.Exec("INSERT INTO oauth (name, appId, creator, secret, rdiruri) VALUES (?, ?, ?, ?, ?)", name, appId, id, secret, rdiruri)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/newauth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
 		}
 
-		c.JSON(200, gin.H{"key": secret})
+		c.JSON(200, gin.H{"key": secret, "appId": appId})
 	})
 
 	router.POST("/api/listauth", func(c *gin.Context) {
@@ -1038,7 +1063,7 @@ func main() {
 			}
 		}(conn)
 
-		rows, err := conn.Query("SELECT appId FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
+		rows, err := conn.Query("SELECT appId, name, rdiruri FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "Failed to query database"})
 			return
@@ -1052,12 +1077,12 @@ func main() {
 
 		var datatemplate []map[string]interface{}
 		for rows.Next() {
-			var appId string
-			if err := rows.Scan(&appId); err != nil {
+			var appId, name, rdiruri string
+			if err := rows.Scan(&appId, &name, &rdiruri); err != nil {
 				c.JSON(500, gin.H{"error": "Failed to scan row"})
 				return
 			}
-			template := map[string]interface{}{"appId": appId}
+			template := map[string]interface{}{"appId": appId, "name": name, "rdiruri": rdiruri}
 			datatemplate = append(datatemplate, template)
 		}
 		if err := rows.Err(); err != nil {

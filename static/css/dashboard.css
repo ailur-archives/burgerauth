@@ -1,7 +1,47 @@
+@import url("/static/fonts/inter.css");
+
 body {
-  font-family: Arial, sans-serif;
+  margin: 0;
+  font-family: "Inter", sans-serif;
   text-align: center;
   overflow-wrap: anywhere;
+  --theme-color: #157efb;
+  --border-color: #dadada;
+  --editor: #ffffff;
+  --bar: #f4f4f4;
+  color: #000000;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    --border-color: #393b3d;
+    --bar: #2d2f31;
+    --editor: #202124;
+    color: #ffffff;
+  }
+}
+
+.spacer {
+  margin-top: 30px;
+}
+
+.credit {
+  position: fixed;
+  left: 5px;
+  color: white;
+  z-index: -1;
+  margin: 0;
+  bottom: 5px;
+  text-shadow: black 1px 1px 5px;
+}
+
+.background {
+  position: fixed;
+  z-index: -2;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 100%;
 }
 
 .newoauth, .oauthlist, .oauthentry {
@@ -15,7 +55,8 @@ body {
   border-radius: 8px;
   border-width: 1px;
   font-size: 17px;
-  background-color: rgb(235, 255, 235);
+  background-color: var(--bar);
+  border-color: var(--border-color);
 }
 
 .oauthentry {
@@ -23,7 +64,6 @@ body {
   flex-direction: column;
   justify-content: center;
   padding: 5px;
-  background-color: lightcyan;
 }
 
 .oauthentry button {
@@ -37,25 +77,36 @@ body {
 }
 
 button {
-  border: 1px solid black;
-  padding: 3px;
-  border-radius: 5px;
-  background-color: lightcyan;
-  transition: all 0.3s ease 0s;
+  background-color: var(--theme-color);
+  color: white;
+  padding: 10px;
+  margin-right: 5px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
 }
 
 button:hover {
-  background-color: white;
+  background-color: #152efb;
+  transition: all 0.3s ease 0s;
 }
 
-h {
+h2 {
   display: block;
   margin-top: 20px;
-  font-size: 20px;
+  font-weight: 300;
 }
 
 input {
-  padding: 3px;
-  border-radius: 5px;
-  border: black solid 1px;
+    width: calc(100% - 120px);
+    height: 30px;
+    margin-bottom: 10px;
+    padding-left: 10px;
+    padding-right: 10px;
+
+    border: solid;
+    border-color: var(--border-color);
+    border-width: 1px;
+    border-radius: 8px;
+    background-color: var(--editor);
 }

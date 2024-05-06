@@ -18,7 +18,7 @@ function attempt() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                appId: document.getElementById("appidbox").value,
+                name: document.getElementById("appidbox").value,
                 rdiruri: document.getElementById("rdiruribox").value,
                 secretKey: localStorage.getItem("DONOTSHARE-secretkey")
             })
@@ -26,12 +26,12 @@ function attempt() {
         .then(response => {
             async function doStuff() {
                 let code = await response.json()
-                if (response.status == 200) {
-                    document.getElementById("status").innerText = "Your key is: " + code["key"] + ". This will only be shown once!"
+                if (response.status === 200) {
+                    document.getElementById("status").innerText = "Your secret key is: " + code["key"] + " and your client id is: " + code["appId"] + ". This will only be shown once!"
                     getauths();
-                } else if (response.status == 500) {
+                } else if (response.status === 500) {
                     document.getElementById("status").innerText = "Whoops... Something went wrong. Please try again later. (Error Code 500)"
-                } else if (response.status == 401) {
+                } else if (response.status === 401) {
                     document.getElementById("status").innerText = "AppID already taken. (Error Code 401)"
                 } else {
                     document.getElementById("status").innerText = "Unkown error encountered. (Error Code " + response.status + ")"
@@ -59,11 +59,15 @@ function getauths() {
             for (let i in responseData) {
                 let oauthElement = document.createElement("div")
                 let oauthText = document.createElement("p")
+                let oauthName = document.createElement("p")
+                let oauthUrl = document.createElement("p")
                 let oauthRemoveButton = document.createElement("button")
                 oauthText.innerText = "Client ID: " + responseData[i]["appId"]
+                oauthName.innerText = "App name: " + responseData[i]["name"]
+                oauthUrl.innerText = "Redirect Url: " + responseData[i]["rdiruri"]
                 oauthRemoveButton.innerText = "Delete Permanently"
-                oauthRemoveButton.addEventListener("click", (event) => {
-                    if (window.confirm("Are you SURE you would like to delete this FOREVER?") == true) {
+                oauthRemoveButton.addEventListener("click", () => {
+                    if (window.confirm("Are you SURE you would like to delete this FOREVER?") === true) {
                         fetch(origin + "/api/deleteauth", {
                             method: "POST",
                             body: JSON.stringify({

@@ -22,8 +22,8 @@
 
             // Get URL parameters
             if (urlParams.has('client_id')) {
-                client_id = urlParams.get('client_id');
-                statusBox.textContent = "Would you like to allow " + client_id + " to access your user information?";
+                let name = document.getElementById("passthrough").innerText;
+                statusBox.textContent = "Would you like to allow " + name + " to access your user information?";
                 redirect_uri = urlParams.get('redirect_uri');
                 response_type = urlParams.get('response_type');
             } else {
@@ -65,6 +65,7 @@
 </head>
 
 <body>
+    <p id="passthrough" style="display: none;">{{ .name }}</p>
     <p class="credit">Image by perga (@pergagreen on discord)</p>
     <img src="/static/img/background.jpg" class="background" alt="">
     <div class="inoutdiv">
