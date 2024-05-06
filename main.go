@@ -90,7 +90,10 @@ func hash(password, salt string) string {
 
 	derivedKey, _ := scrypt.Key(passwordBytes, saltBytes, 32768, 8, 1, 64)
 
-	hashString := fmt.Sprintf("scrypt:32768:8:1$%s$%s", salt, hex.EncodeToString(derivedKey))
+	hashString := fmt.Sprintf("scrypt:32768
+
+
+:8:1$%s$%s", salt, hex.EncodeToString(derivedKey))
 	return hashString
 }
 
@@ -409,7 +412,7 @@ func main() {
 			}
 		}(conn)
 
-		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), genSalt(512))
+		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), genSalt(255))
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup user creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			return
@@ -577,7 +580,7 @@ func main() {
 			return
 		}
 
-		c.JSON(200, gin.H{"sub": uniqueid, "name": username})
+		c.JSON(200, gin.H{"sub": uniqueid[:255], "name": username})
 	})
 
 	router.POST("/api/uniqueid", func(c *gin.Context) {
@@ -771,7 +774,7 @@ func main() {
 		}
 
 		datatemplate := jwt.MapClaims{
-			"sub":       uniqueid,
+			"sub":       uniqueid[:255],
 			"iss":       "https://auth.hectabit.org",
 			"name":      username,
 			"aud":       appId,
