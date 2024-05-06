@@ -8,10 +8,22 @@ window.addEventListener("message", function(event) {
             access_token: access_token
         })
     })
-    .then((response) => function () {
-        if (response.status === 200) {
-            console.log("Key is valid")
-            window.postMessage(localStorage.getItem("DONOTSHARE-password"), event.origin)
+    .then((response) => response)
+    .then((response) => {
+        async function doStuff() {
+            let responseData = await response.json()
+            if (response.status === 200) {
+                console.log("Key is valid")
+                let key = localStorage.getItem("DONOTSHARE-password").concat(responseData["appId"]);
+                for (let i = 0; i < 128; i++) {
+                    key = await hashwasm.sha3(key)
+                }
+                parent.window.postMessage(key, "*")
+            }
+            console.log("Alive check!")
         }
+        console.log("Running doStuff")
+        doStuff();
     })
+    console.log("The script is running!")
 });

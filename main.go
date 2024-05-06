@@ -739,7 +739,7 @@ func main() {
 			return
 		}
 
-		c.JSON(200, gin.H{"success": "true"})
+                c.JSON(200, gin.H{"appId": claims["aud"]})
 	})
 
 	router.GET("/api/auth", func(c *gin.Context) {
