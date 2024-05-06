@@ -22,6 +22,7 @@
 
             // Get URL parameters
             if (urlParams.has('client_id')) {
+                client_id = urlParams.get('client_id')
                 let name = document.getElementById("passthrough").innerText;
                 statusBox.textContent = "Would you like to allow " + name + " to access your user information?";
                 redirect_uri = urlParams.get('redirect_uri');

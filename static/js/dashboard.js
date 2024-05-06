@@ -11,7 +11,7 @@ if (remote == null) {
 
 
 function attempt() {
-    if (document.getElementById("appidbox").value.match(/^[A-Za-z]+$/)) {
+    if (document.getElementById("appidbox").value != "") {
         fetch(origin + "/api/newauth", {
             method: "POST",
             headers: {
@@ -83,6 +83,8 @@ function getauths() {
                 });
 
                 oauthElement.append(oauthText)
+                oauthElement.append(oauthName)
+                oauthElement.append(oauthUrl)
                 oauthElement.append(oauthRemoveButton)
                 oauthElement.classList.add("oauthentry")
 

@@ -772,6 +772,7 @@ func main() {
 		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+                               fmt.Println(appId)
 				c.String(401, "OAuth screening failed")
 			} else {
 				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
@@ -785,6 +786,7 @@ func main() {
 		}
 
 		if !(appidcheck == appId) {
+                        fmt.Println(appidcheck, appId)
 			c.String(401, "OAuth screening failed")
 			return
 		}
