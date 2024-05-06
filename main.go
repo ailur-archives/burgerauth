@@ -90,10 +90,7 @@ func hash(password, salt string) string {
 
 	derivedKey, _ := scrypt.Key(passwordBytes, saltBytes, 32768, 8, 1, 64)
 
-	hashString := fmt.Sprintf("scrypt:32768
-
-
-:8:1$%s$%s", salt, hex.EncodeToString(derivedKey))
+	hashString := fmt.Sprintf("scrypt:32768:8:1$%s$%s", salt, hex.EncodeToString(derivedKey))
 	return hashString
 }
 
