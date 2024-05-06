@@ -355,26 +355,28 @@ func main() {
 	})
 
 	router.GET("/app", func(c *gin.Context) {
-		conn := get_db_connection()
-		defer func(conn *sql.DB) {
-			err := conn.Close()
+		name := ""
+		if c.Request.URL.Query().Get("client_id") != "" {
+			conn := get_db_connection()
+			defer func(conn *sql.DB) {
+				err := conn.Close()
+				if err != nil {
+					log.Println("[ERROR] Unknown in /app defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+					return
+				}
+			}(conn)
+
+			appId := c.Request.URL.Query().Get("client_id")
+			err := conn.QueryRow("SELECT name FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&name)
 			if err != nil {
-				log.Println("[ERROR] Unknown in /app defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				if errors.Is(err, sql.ErrNoRows) {
+					c.String(404, "App not found")
+				} else {
+					log.Println("[ERROR] Unknown in /app at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				}
 				return
 			}
-		}(conn)
-
-		appId := c.Request.URL.Query().Get("client_id")
-		var name string
-		err := conn.QueryRow("SELECT name FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&name)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				c.String(404, "App not found")
-			} else {
-				log.Println("[ERROR] Unknown in /app at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			}
-			return
 		}
 		c.HTML(200, "main.html", gin.H{"name": name})
 	})
