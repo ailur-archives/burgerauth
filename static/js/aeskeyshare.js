@@ -1,4 +1,3 @@
-// Add an event listener to handle incoming messages
 window.addEventListener("message", function(event) {
     const access_token = event.data;
 

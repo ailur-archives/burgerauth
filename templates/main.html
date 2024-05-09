@@ -57,7 +57,7 @@
         });
 
         function oauth() {
-            document.cookie = "key=" + secret_key + "; expires=" + expires + "; path=/";
+            document.cookie = "key=" + secret_key + "; expires=" + expires + "; path=/; SameSite=Strict";
 
             // Send data to example.org using POST request
             window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce);

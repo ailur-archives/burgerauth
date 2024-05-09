@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/viper"
@@ -318,11 +320,13 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
+	store := cookie.NewStore([]byte(SECRET_KEY))
+	router.Use(sessions.Sessions("currentsession", store))
 
 	// Enable CORS
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "*, Authorization")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "*")
 
 		// Handle preflight requests
@@ -603,6 +607,89 @@ func main() {
 		c.JSON(200, gin.H{"sub": uniqueid[:255], "name": username})
 	})
 
+	router.POST("/api/submitkey", func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Options(sessions.Options{
+			SameSite: 3,
+		})
+
+		var data map[string]interface{}
+		err := c.ShouldBindJSON(&data)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		token := data["access_token"].(string)
+
+		conn := get_db_connection()
+		defer func(conn *sql.DB) {
+			err := conn.Close()
+			if err != nil {
+				log.Println("[ERROR] Unknown in /userinfo defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
+				return
+			}
+		}(conn)
+		var blacklisted bool
+		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
+		if err == nil {
+			c.JSON(400, gin.H{"error": "Token is in blacklist"})
+			return
+		} else {
+			if !errors.Is(err, sql.ErrNoRows) {
+				log.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				return
+			}
+		}
+
+		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			return publicKey, nil
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Malformed token"})
+			return
+		}
+
+		var claims jwt.MapClaims
+		var ok bool
+
+		if parsedtoken.Valid {
+			claims, ok = parsedtoken.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(401, gin.H{"error": "Invalid token claims"})
+				return
+			}
+		}
+
+		usersession := claims["session"].(string)
+		exp := claims["exp"].(float64)
+		if int64(exp) < time.Now().Unix() {
+			c.JSON(403, gin.H{"error": "Expired token"})
+			return
+		}
+
+		userid, norows := get_user_from_session(usersession)
+		if norows {
+			c.JSON(400, gin.H{"error": "Session does not exist"})
+			return
+		}
+
+		_, _, _, _, norows = get_user(userid)
+		if norows {
+			c.JSON(400, gin.H{"error": "User does not exist"})
+			return
+		}
+
+		session.Set("key", data["public_key"].(string))
+		c.JSON(200, gin.H{"success": "true"})
+	})
+
+	router.POST("/api/getkey", func(c *gin.Context) {
+
+	}
+
 	router.POST("/api/uniqueid", func(c *gin.Context) {
 		var data map[string]interface{}
 		err := c.ShouldBindJSON(&data)
@@ -739,7 +826,7 @@ func main() {
 			return
 		}
 
-                c.JSON(200, gin.H{"appId": claims["aud"]})
+		c.JSON(200, gin.H{"appId": claims["aud"]})
 	})
 
 	router.GET("/api/auth", func(c *gin.Context) {
@@ -772,7 +859,7 @@ func main() {
 		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-                               fmt.Println(appId)
+				fmt.Println(appId)
 				c.String(401, "OAuth screening failed")
 			} else {
 				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
@@ -786,7 +873,7 @@ func main() {
 		}
 
 		if !(appidcheck == appId) {
-                        fmt.Println(appidcheck, appId)
+			fmt.Println(appidcheck, appId)
 			c.String(401, "OAuth screening failed")
 			return
 		}
