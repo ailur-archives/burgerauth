@@ -19,6 +19,8 @@ let usernameBox = document.getElementById("usernameBox")
 let passwordBox = document.getElementById("passwordBox")
 let statusBox = document.getElementById("statusBox")
 let signupButton = document.getElementById("signupButton")
+let captchaBox = document.getElementById("captchaBox")
+let unique_token = document.getElementById("passthrough").innerText
 
 function showElements(yesorno) {
     if (!yesorno) {
@@ -37,12 +39,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById("homeserver").innerText = "Your homeserver is: " + remote + ". "
 });
 
-signupButton.addEventListener("click", (event) => {
+signupButton.addEventListener("click", () => {
     async function doStuff() {
         let username = usernameBox.value
         let password = passwordBox.value
+        let captcha = captchaBox.value
 
-        if (username == "") {
+        if (username === "") {
             statusBox.innerText = "A username is required!"
             return
         }
@@ -50,12 +53,16 @@ signupButton.addEventListener("click", (event) => {
             statusBox.innerText = "Username cannot be more than 20 characters!"
             return
         }
-        if (password == "") {
+        if (password === "") {
             statusBox.innerText = "A password is required!"
             return
         }
         if ((password).length < 8) {
             statusBox.innerText = "8 or more characters are required!"
+            return
+        }
+        if (captcha === "") {
+            statusBox.innerText = "Please complete the captcha!"
             return
         }
 
@@ -68,14 +75,16 @@ signupButton.addEventListener("click", (event) => {
                 key = await hashwasm.sha3(key)
             }
             return key
-        };
+        }
 
 
         fetch(remote + "/api/signup", {
             method: "POST",
             body: JSON.stringify({
                 username: username,
-                password: await hashpass(password)
+                password: await hashpass(password),
+                captcha: captcha,
+                unique_token: unique_token
             }),
             headers: {
                 "Content-Type": "application/json; charset=UTF-8"
@@ -87,14 +96,14 @@ signupButton.addEventListener("click", (event) => {
                     let responseData = await response.json()
                     console.log(responseData)
 
-                    if (response.status == 200) {
-                        statusBox.innerText == "redirecting.."
+                    if (response.status === 200) {
+                        statusBox.innerText = "Redirecting..."
                         localStorage.setItem("DONOTSHARE-secretkey", responseData["key"])
                         localStorage.setItem("DONOTSHARE-password", await hashwasm.sha512(password))
 
                         window.location.href = "/app" + window.location.search
                     }
-                    else if (response.status == 409) {
+                    else if (response.status === 409) {
                         statusBox.innerText = "Username already taken!"
                         showElements(true)
                     }
@@ -112,15 +121,13 @@ signupButton.addEventListener("click", (event) => {
 document.getElementById("loginButton").addEventListener("click", function(event) {
     event.preventDefault();
 
-    var queryString = window.location.search;
-    var newURL = "/login" + queryString;
-    window.location.href = newURL;
+    const queryString = window.location.search;
+    window.location.href = "/login" + queryString;
 });
 
 document.getElementById("privacyButton").addEventListener("click", function(event) {
     event.preventDefault();
 
-    var queryString = window.location.search;
-    var newURL = "/privacy" + queryString;
-    window.location.href = newURL;
+    const queryString = window.location.search;
+    window.location.href = "/privacy" + queryString;
 });

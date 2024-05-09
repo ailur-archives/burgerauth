@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"centrifuge.hectabit.org/HectaBit/captcha"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -351,7 +353,36 @@ func main() {
 	})
 
 	router.GET("/signup", func(c *gin.Context) {
-		c.HTML(200, "signup.html", gin.H{})
+		session := sessions.Default(c)
+		sessionid := genSalt(512)
+		session.Options(sessions.Options{
+			SameSite: 3,
+		})
+		data, err := captcha.New(500, 100)
+		if err != nil {
+			fmt.Println("[ERROR] Failed to generate captcha at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Failed to generate captcha")
+			return
+		}
+		session.Set("captcha", data.Text)
+		session.Set("id", sessionid)
+		err = session.Save()
+		if err != nil {
+			fmt.Println("[ERROR] Failed to save session in /login at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Failed to save session")
+			return
+		}
+		var b64bytes bytes.Buffer
+		err = data.WriteImage(&b64bytes)
+		if err != nil {
+			fmt.Println("[ERROR] Failed to encode captcha at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Failed to encode captcha")
+			return
+		}
+		c.HTML(200, "signup.html", gin.H{
+			"captcha_image": base64.StdEncoding.EncodeToString(b64bytes.Bytes()),
+			"unique_token":  sessionid,
+		})
 	})
 
 	router.GET("/logout", func(c *gin.Context) {
@@ -404,6 +435,7 @@ func main() {
 	router.POST("/api/signup", func(c *gin.Context) {
 		var data map[string]interface{}
 		err := c.ShouldBindJSON(&data)
+		session := sessions.Default(c)
 		if err != nil {
 			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
@@ -411,6 +443,17 @@ func main() {
 
 		username := data["username"].(string)
 		password := data["password"].(string)
+
+		if data["unique_token"].(string) != session.Get("unique_token") {
+			c.JSON(403, gin.H{"error": "Invalid token"})
+			return
+		}
+		if data["captcha"].(string) != session.Get("captcha") {
+			fmt.Println(data["captcha"])
+			fmt.Println(session.Get("captcha"))
+			c.JSON(401, gin.H{"error": "Captcha failed"})
+			return
+		}
 
 		if username == "" || password == "" || len(username) > 20 || !regexp.MustCompile("^[a-zA-Z0-9]+$").MatchString(username) {
 			c.JSON(422, gin.H{"error": "Invalid username or password"})
@@ -606,89 +649,6 @@ func main() {
 
 		c.JSON(200, gin.H{"sub": uniqueid[:255], "name": username})
 	})
-
-	router.POST("/api/submitkey", func(c *gin.Context) {
-		session := sessions.Default(c)
-		session.Options(sessions.Options{
-			SameSite: 3,
-		})
-
-		var data map[string]interface{}
-		err := c.ShouldBindJSON(&data)
-		if err != nil {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
-			return
-		}
-
-		token := data["access_token"].(string)
-
-		conn := get_db_connection()
-		defer func(conn *sql.DB) {
-			err := conn.Close()
-			if err != nil {
-				log.Println("[ERROR] Unknown in /userinfo defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more detail. Include this error code: cannot_close_db.")
-				return
-			}
-		}(conn)
-		var blacklisted bool
-		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
-		if err == nil {
-			c.JSON(400, gin.H{"error": "Token is in blacklist"})
-			return
-		} else {
-			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				return
-			}
-		}
-
-		parsedtoken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-			return publicKey, nil
-		})
-
-		if err != nil {
-			c.JSON(401, gin.H{"error": "Malformed token"})
-			return
-		}
-
-		var claims jwt.MapClaims
-		var ok bool
-
-		if parsedtoken.Valid {
-			claims, ok = parsedtoken.Claims.(jwt.MapClaims)
-			if !ok {
-				c.JSON(401, gin.H{"error": "Invalid token claims"})
-				return
-			}
-		}
-
-		usersession := claims["session"].(string)
-		exp := claims["exp"].(float64)
-		if int64(exp) < time.Now().Unix() {
-			c.JSON(403, gin.H{"error": "Expired token"})
-			return
-		}
-
-		userid, norows := get_user_from_session(usersession)
-		if norows {
-			c.JSON(400, gin.H{"error": "Session does not exist"})
-			return
-		}
-
-		_, _, _, _, norows = get_user(userid)
-		if norows {
-			c.JSON(400, gin.H{"error": "User does not exist"})
-			return
-		}
-
-		session.Set("key", data["public_key"].(string))
-		c.JSON(200, gin.H{"success": "true"})
-	})
-
-	router.POST("/api/getkey", func(c *gin.Context) {
-
-	}
 
 	router.POST("/api/uniqueid", func(c *gin.Context) {
 		var data map[string]interface{}
