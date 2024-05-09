@@ -365,7 +365,7 @@ func main() {
 			return
 		}
 		session.Set("captcha", data.Text)
-		session.Set("id", sessionid)
+		session.Set("unique_token", sessionid)
 		err = session.Save()
 		if err != nil {
 			fmt.Println("[ERROR] Failed to save session in /login at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
@@ -449,8 +449,6 @@ func main() {
 			return
 		}
 		if data["captcha"].(string) != session.Get("captcha") {
-			fmt.Println(data["captcha"])
-			fmt.Println(session.Get("captcha"))
 			c.JSON(401, gin.H{"error": "Captcha failed"})
 			return
 		}

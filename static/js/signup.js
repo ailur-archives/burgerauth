@@ -102,12 +102,14 @@ signupButton.addEventListener("click", () => {
                         localStorage.setItem("DONOTSHARE-password", await hashwasm.sha512(password))
 
                         window.location.href = "/app" + window.location.search
-                    }
-                    else if (response.status === 409) {
+                    } else if (response.status === 409) {
                         statusBox.innerText = "Username already taken!"
                         showElements(true)
-                    }
-                    else {
+                    } else if (response.status === 401) {
+                        statusBox.innerText = "CAPTCHA has expired!"
+                    } else if (response.status === 403) {
+                        statusBox.innerText = "CAPTCHA is incorrect!"
+                    } else {
                         statusBox.innerText = "Something went wrong!"
                         showElements(true)
                     }
