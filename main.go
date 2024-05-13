@@ -1,3 +1,5 @@
+// This code is licensed under the latest version of the GNU Affero General Public License
+
 package main
 
 import (
