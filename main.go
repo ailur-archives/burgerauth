@@ -807,16 +807,6 @@ func main() {
 
 		var appidcheck, rdiruricheck string
 
-		if !(rdiruricheck == redirect_uri) {
-			c.String(401, "Redirect URI does not match")
-			return
-		}
-
-		if deny == "true" {
-			c.Redirect(302, redirect_uri+"?error=access_denied&state="+state)
-			return
-		}
-
 		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -827,6 +817,17 @@ func main() {
 			}
 			return
 		}
+
+                if !(rdiruricheck == redirect_uri) {
+                        c.String(401, "Redirect URI does not match")
+                        return
+                }
+
+                if deny == "true" {
+                        c.Redirect(302, redirect_uri+"?error=access_denied&state="+state)
+                        return
+                }
+
 
 		if !(appidcheck == appId) {
 			fmt.Println(appidcheck, appId)
