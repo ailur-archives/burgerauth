@@ -85,7 +85,7 @@ body {
     background-color: var(--bar);
 }
 
-.inoutdiv input {
+input {
     width: calc(100% - 120px);
     height: 30px;
     margin-bottom: 10px;
