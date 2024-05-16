@@ -21,6 +21,26 @@ body {
   }
 }
 
+.hidden {
+  display: none;
+}
+
+.iframe {
+  position: fixed;
+  right: 0;
+  top: 38px;
+  border: none;
+  height: 276px;
+  width: 400px;
+  transform: translateX(26px);
+}
+
+.acctbutton {
+  position: fixed;
+  right: 0;
+  margin: 0;
+}
+
 .spacer {
   margin-top: 30px;
 }

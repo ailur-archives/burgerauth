@@ -422,6 +422,10 @@ func main() {
 		c.HTML(200, "dashboard.html", gin.H{})
 	})
 
+	router.GET("/account", func(c *gin.Context) {
+		c.HTML(200, "acct.html", gin.H{})
+	})
+
 	router.GET("/aeskeyshare", func(c *gin.Context) {
 		c.HTML(200, "aeskeyshare.html", gin.H{})
 	})
