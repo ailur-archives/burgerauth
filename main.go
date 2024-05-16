@@ -801,6 +801,42 @@ func main() {
 		redirect_uri := c.Request.URL.Query().Get("redirect_uri")
 		state := c.Request.URL.Query().Get("state")
 		nonce := c.Request.URL.Query().Get("nonce")
+		deny := c.Request.URL.Query().Get("deny")
+
+		conn := get_db_connection()
+
+		var appidcheck, rdiruricheck string
+
+		if !(rdiruricheck == redirect_uri) {
+			c.String(401, "Redirect URI does not match")
+			return
+		}
+
+		if deny == "true" {
+			c.Redirect(302, redirect_uri+"?error=access_denied&state="+state)
+			return
+		}
+
+		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				fmt.Println(appId)
+				c.String(401, "OAuth screening failed")
+			} else {
+				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			}
+			return
+		}
+
+		if !(appidcheck == appId) {
+			fmt.Println(appidcheck, appId)
+			c.String(401, "OAuth screening failed")
+			return
+		}
+
+		if nonce == "none" {
+			nonce = genSalt(512)
+		}
 
 		userid, norows := get_user_from_session(secretKey)
 
@@ -814,36 +850,6 @@ func main() {
 		if norows {
 			c.String(400, "User does not exist")
 			return
-		}
-
-		conn := get_db_connection()
-
-		var appidcheck, rdiruricheck string
-
-		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appidcheck, &rdiruricheck)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				fmt.Println(appId)
-				c.String(401, "OAuth screening failed")
-			} else {
-				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			}
-			return
-		}
-
-		if !(rdiruricheck == redirect_uri) {
-			c.String(401, "Redirect URI does not match")
-			return
-		}
-
-		if !(appidcheck == appId) {
-			fmt.Println(appidcheck, appId)
-			c.String(401, "OAuth screening failed")
-			return
-		}
-
-		if nonce == "none" {
-			nonce = genSalt(512)
 		}
 
 		datatemplate := jwt.MapClaims{

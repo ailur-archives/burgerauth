@@ -56,11 +56,15 @@
             expires = new Date(expireTime).toUTCString();
         });
 
+        function deny() {
+            document.cookie = "key=" + secret_key + "; expires=" + expires + "; path=/; SameSite=Strict";
+            // Redirect to the redirect_uri so that an open redirect is not possible
+            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce + "&deny=true");
+        }
+
         function oauth() {
             document.cookie = "key=" + secret_key + "; expires=" + expires + "; path=/; SameSite=Strict";
-
-            // Send data to example.org using POST request
-            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce);
+            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce + "&deny=false");
         }
     </script>
 </head>
@@ -76,7 +80,7 @@
         <br>
         <div style="display: flex;justify-content: center;">
             <button onclick="oauth();" style="width: 100%;margin: 0 3px 0 0;">Allow</button>
-            <button onclick="window.location.replace('https://www.hectabit.org');" style="width: 100%;margin: 0 0 0 3px;">Deny</button>
+            <button onclick="deny();" style="width: 100%;margin: 0 0 0 3px;">Deny</button>
         </div>
     </div>
 </body>
