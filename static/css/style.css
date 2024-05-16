@@ -24,7 +24,7 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-	--invertdm: 100%;
+        --invertdm: 100%;
         --contrast: #2d2f21;
         --contrast2: #2d2f21;
         --bar: #2d2f31;
@@ -67,15 +67,6 @@ h5,
 h6 {
     color: var(--text-color);
     white-space: break-spaces;
-}
-
-h7 {
-    display: block;
-    font-size: 20px;
-    margin-top: 0.67em;
-    margin-bottom: 0.67em;
-    margin-left: 0;
-    margin-right: 0;
 }
 
 body {
@@ -123,6 +114,90 @@ body {
 
 }
 
+.iframe {
+    position: fixed;
+    right: 0;
+    top: 38px;
+    border: none;
+    height: 276px;
+    width: 400px;
+    transform: translateX(26px);
+}
+
+.acctbutton {
+    position: fixed;
+    right: 0;
+    margin: 0;
+}
+
+.spacer {
+    margin-top: 30px;
+}
+
+.credit {
+    position: fixed;
+    left: 5px;
+    color: white;
+    z-index: -1;
+    margin: 0;
+    bottom: 5px;
+    text-shadow: black 1px 1px 5px;
+}
+
+.newoauth, .oauthlist, .oauthentry {
+    text-align: center;
+    width: calc(100% - 17.5vh);
+    margin-top: 7vh;
+    margin-left: 7vh;
+    margin-right: 7vh;
+    padding: 15px 10px 30px;
+    border-style: solid;
+    border-image: none;
+    border-radius: 8px;
+    border-width: 1px;
+    font-size: 17px;
+    background-color: var(--bar);
+    border-color: var(--border-color);
+}
+
+.oauthentry {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 5px;
+}
+
+.oauthentry button {
+    padding: 10px;
+    background-color: red;
+    color: white
+}
+
+.oauthentry button:hover {
+    background-color: black;
+}
+
+button {
+    background-color: var(--theme-color);
+    color: white;
+    padding: 10px;
+    margin-right: 5px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+button:hover {
+    background-color: #152efb;
+    transition: all 0.3s ease 0s;
+}
+
+h2 {
+    display: block;
+    margin-top: 20px;
+    font-weight: 300;
+}
+
 .inoutdiv a {
     color: grey;
     text-align: center;
@@ -134,15 +209,6 @@ body {
     top: 0;
     width: 100%;
     min-height: 100%;
-}
-
-.credit {
-    position: fixed;
-    left: 5px;
-    color: white;
-    z-index: -1;
-    margin: 0;
-    bottom: 5px;
 }
 
 .hidden {
