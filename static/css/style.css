@@ -116,8 +116,8 @@ input {
 
 .iframe {
     position: fixed;
-    right: 0;
-    top: 38px;
+    right: 5px;
+    top: 47px;
     border: none;
     height: 276px;
     width: 400px;
@@ -126,7 +126,7 @@ input {
 
 .acctbutton {
     position: fixed;
-    right: 0;
+    right: 5px;
     margin: 0;
 }
 
