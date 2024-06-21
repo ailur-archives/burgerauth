@@ -8,27 +8,26 @@
     <body style="background-color: transparent;">
         <script>
             async function deleteacct() {
-                if (confirm("Are you SURE you would like to delete your account forever?") != true) {
-                    break
-                }
-                await fetch(remote + "/api/deleteaccount", {
-                    method: "POST",
-                    body: JSON.stringify({
-                        "secretKey": localStorage.getItem("DONOTSHARE-secretkey")
-                    }),
-                    headers: {
-                        "Content-Type": "application/json; charset=UTF-8"
-                    }
-                })
-                .then((response) => response)
-                .then((response) => {
-                    async function doStuff() {
-                        if (response.status === 200) {
-                            parent.window.location.href = '/logout';
+                if (confirm("Are you SURE you would like to delete your account forever?") == true) {
+                    await fetch(remote + "/api/deleteaccount", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            "secretKey": localStorage.getItem("DONOTSHARE-secretkey")
+                        }),
+                        headers: {
+                            "Content-Type": "application/json; charset=UTF-8"
                         }
-                    }
-                    doStuff()
-                    });
+                    })
+                    .then((response) => response)
+                    .then((response) => {
+                        async function doStuff() {
+                            if (response.status === 200) {
+                                parent.window.location.href = '/logout';
+                            }
+                        }
+                        doStuff()
+                        });
+                }
             }
 
             fetch("/api/userinfo", {
