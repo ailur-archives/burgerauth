@@ -604,7 +604,18 @@ func main() {
 	})
 
 	router.GET("/userinfo", func(c *gin.Context) {
-		token := strings.Fields(c.Request.Header["Authorization"][0])[1]
+		var token string
+		if len(c.Request.Header["Authorization"]) > 0 {
+			if len(strings.Fields(c.Request.Header["Authorization"][0])) > 1 {
+				token = strings.Fields(c.Request.Header["Authorization"][0])[1]
+			} else {
+				c.JSON(400, gin.H{"error": "Invalid token"})
+				return
+			}
+		} else {
+			c.JSON(400, gin.H{"error": "Invalid token"})
+			return
+		}
 
 		var blacklisted bool
 		err := conn.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
@@ -869,11 +880,12 @@ func main() {
 			"nonce":     nonce,
 		}
 
+		secondNonce, err := genSalt(512)
 		dataTemplateTwo := jwt.MapClaims{
 			"exp":     time.Now().Unix() + 2592000,
 			"iat":     time.Now().Unix(),
 			"session": secretKey,
-			"nonce":   genSalt(512),
+			"nonce":   secondNonce,
 		}
 
 		tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
@@ -881,7 +893,7 @@ func main() {
 		jwt_token, err := tokenTemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKOWN-API-AUTH-JWTCANNOTSIGN")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
 			return
 		}
 
@@ -890,7 +902,7 @@ func main() {
 		secret_token, err := secretTemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKOWN-API-AUTH-JWTCANNOTSIGN.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN.")
 			return
 		}
 
@@ -938,7 +950,7 @@ func main() {
 
 		var appIdCheck, secretCheck, openid, loginCode, PKCECode, PKCEMethod string
 
-		err = conn.QueryRow("SELECT o.appId, o.secret, l.openid, l.code, l.PKCECode, l.PKCEMethod FROM oauth AS o JOIN logins AS l ON o.appId = l.appId WHERE o.appId = ? AND l.secret = ? LIMIT 1;", appId, code).Scan(&appIdCheck, &secretCheck, &openid, &loginCode, &PKCECode, &PKCEMethod)
+		err = conn.QueryRow("SELECT o.appId, o.secret, l.openid, l.code, l.pkce, l.pkcemethod FROM oauth AS o JOIN logins AS l ON o.appId = l.appId WHERE o.appId = ? AND l.secret = ? LIMIT 1;", appId, code).Scan(&appIdCheck, &secretCheck, &openid, &loginCode, &PKCECode, &PKCEMethod)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
