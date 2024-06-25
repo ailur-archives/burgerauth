@@ -1020,7 +1020,7 @@ func main() {
 			}
 		}
 
-		_, err = mem.Exec("DELETE FROM logins WHERE code = ?", loginCode)
+		_, err = mem.Exec("DELETE FROM logins WHERE loginToken = ?", loginCode)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
