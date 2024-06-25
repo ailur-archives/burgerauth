@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -928,13 +927,12 @@ func main() {
 			"session":     secretKey,
 			"appId":       appId,
 			"exchangeKey": exchangeKey,
+			"oauthToken":  oauthToken,
 			"creator":     userId,
+			"openid":      openIdToken,
 			"PKCECode":    code,
 			"PKCEMethod":  codeMethod,
 		}
-		c.SetSameSite(3)
-		c.SetCookie("oauthToken", oauthToken, 300, "/", "", true, true)
-		c.SetCookie("openIdToken", openIdToken, 300, "/", "", true, true)
 
 		sessionInfoStr, err := json.Marshal(sessionInfo)
 		if err != nil {
@@ -1004,34 +1002,10 @@ func main() {
 
 		var activeLoginMap map[string]any
 		err = json.Unmarshal([]byte(activeLogin.(string)), &activeLoginMap)
-		PKCECode, PKCEMethod, loginCode := activeLoginMap["PKCECode"].(string), activeLoginMap["PKCEMethod"].(string), activeLoginMap["exchangeKey"].(string)
+		openid, loginCode, PKCECode, PKCEMethod := activeLoginMap["openid"].(string), activeLoginMap["session"].(string), activeLoginMap["PKCECode"].(string), activeLoginMap["PKCEMethod"].(string)
 		if loginCode != code {
 			c.JSON(401, gin.H{"error": "Another login attempt is in progress or the login was never started"})
 			return
-		}
-
-		oauthCode, err := c.Cookie("oauthToken")
-		if err != nil {
-			if errors.Is(err, http.ErrNoCookie) {
-				c.JSON(401, gin.H{"error": "The token has expired or was never created"})
-				return
-			} else {
-				log.Println("[ERROR] Unknown in /api/tokenauth oauth cookie at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-OAUTHTOKEN"})
-				return
-			}
-		}
-
-		openid, err := c.Cookie("openIdToken")
-		if err != nil {
-			if errors.Is(err, http.ErrNoCookie) {
-				c.JSON(401, gin.H{"error": "The token has expired or was never created"})
-				return
-			} else {
-				log.Println("[ERROR] Unknown in /api/tokenauth openid cookie at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-OAUTHTOKEN"})
-				return
-			}
 		}
 
 		if verifyCode {
@@ -1061,7 +1035,7 @@ func main() {
 			}
 		}
 
-		c.JSON(200, gin.H{"access_token": oauthCode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+		c.JSON(200, gin.H{"access_token": loginCode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
 	})
 
 	router.POST("/api/deleteauth", func(c *gin.Context) {
