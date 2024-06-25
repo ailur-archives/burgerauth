@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/mattn/go-sqlite3"
 	"log"
 	"math/big"
 	"os"
@@ -270,7 +271,7 @@ func main() {
 		}
 	}(mem)
 
-	_, err = mem.Exec("CREATE TABLE logins (appId TEXT NOT NULL, exchangeCode TEXT NOT NULL, loginToken TEXT NOT NULL, creator INT NOT NULL, openid TEXT NOT NULL, pkce TEXT NOT NULL DEFAULT 'none', pkcemethod TEXT NOT NULL DEFAULT 'none')")
+	_, err = mem.Exec("CREATE TABLE logins (appId TEXT NOT NULL, exchangeCode TEXT NOT NULL, loginToken TEXT NOT NULL, creator INT NOT NULL UNIQUE, openid TEXT NOT NULL, pkce TEXT NOT NULL DEFAULT 'none', pkcemethod TEXT NOT NULL DEFAULT 'none')")
 	if err != nil {
 		log.Fatalln("[FATAL] Cannot create logins table at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 	}
@@ -932,6 +933,10 @@ func main() {
 
 		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secret_token, userid, jwt_token, code, codeMethod)
 		if err != nil {
+			if errors.Is(err, sqlite3.ErrConstraint) {
+				c.String(400, "Only one login is permitted at a time. Please try again later.")
+				return
+			}
 			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
 			return
