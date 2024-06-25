@@ -305,12 +305,6 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	store := cookie.NewStore([]byte(SECRET_KEY))
-	store.Options(sessions.Options{
-		MaxAge:   300,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: 3,
-	})
 	router.Use(sessions.Sessions("currentSession", store))
 
 	// Enable CORS
@@ -819,8 +813,6 @@ func main() {
 		nonce := c.Request.URL.Query().Get("nonce")
 		deny := c.Request.URL.Query().Get("deny")
 
-		session := sessions.Default(c)
-
 		var appIdCheck, redirectUriCheck string
 
 		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appIdCheck, &redirectUriCheck)
@@ -860,13 +852,13 @@ func main() {
 			}
 		}
 
-		_, userId, err := getSession(secretKey)
+		_, userid, err := getSession(secretKey)
 		if err != nil {
 			c.String(401, "Invalid session")
 			return
 		}
 
-		_, username, _, sub, err := getUser(userId)
+		_, username, _, sub, err := getUser(userid)
 		if errors.Is(err, sql.ErrNoRows) {
 			c.String(400, "User does not exist")
 			return
@@ -898,50 +890,38 @@ func main() {
 
 		tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
 		tokenTemp.Header["kid"] = "burgerauth"
-		openIdToken, err := tokenTemp.SignedString(privateKey)
+		jwt_token, err := tokenTemp.SignedString(privateKey)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth openIdToken at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
 			return
 		}
 
 		secretTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplateTwo)
 		secretTemp.Header["kid"] = "burgerauth"
-		oauthToken, err := secretTemp.SignedString(privateKey)
+		secret_token, err := secretTemp.SignedString(privateKey)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth oauthToken at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN.")
 			return
 		}
 
-		exchangeKey, err := genSalt(512)
+		randomBytes, err := genSalt(512)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth exchangeKey at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth randomBytes at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-RANDOMBYTES.")
 			return
 		}
 
-		sessionInfo := map[string]any{
-			"iat":         time.Now().Unix(),
-			"session":     secretKey,
-			"appId":       appId,
-			"exchangeKey": exchangeKey,
-			"oauthToken":  oauthToken,
-			"creator":     userId,
-			"openid":      openIdToken,
-			"PKCECode":    code,
-			"PKCEMethod":  codeMethod,
-		}
-		session.Set("activeLogin", sessionInfo)
-		err = session.Save()
+		_, err = conn.Exec("INSERT INTO logins (appId, secret, nextsecret, code, nextcode, creator, openid, nextopenid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, "none", secret_token, "none", userid, jwt_token, "none", code, codeMethod)
 		if err != nil {
-			log.Println("[ERROR] Client-Server unknown in /api/auth session save at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(400, "Something went wrong, but we don't know who's fault it is (because we are mean coders, the error code says it's yours). If you deliberately caused this error (well done), please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and give us more info on how it happened. Your error code is: UNKNOWN-API-AUTH-SESSIONSAVE.")
+			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
 			return
 		}
 
-		if exchangeKey != "" {
-			c.Redirect(302, redirect_uri+"?code="+exchangeKey+"&state="+state)
+		if randomBytes != "" {
+			c.Redirect(302, redirect_uri+"?code="+randomBytes+"&state="+state)
 		} else {
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-REDIRECT.")
 			log.Println("[ERROR] Secret key not found at", strconv.FormatInt(time.Now().Unix(), 10))
@@ -961,8 +941,6 @@ func main() {
 		code_verify := data.Get("code_verifier")
 		secret := data.Get("client_secret")
 
-		session := sessions.Default(c)
-
 		var verifyCode bool
 		if code_verify == "" {
 			verifyCode = false
@@ -970,8 +948,9 @@ func main() {
 			verifyCode = true
 		}
 
-		var appIdCheck, secretCheck string
-		err = conn.QueryRow("SELECT appId, secret FROM oauth WHERE appId = ? LIMIT 1;", appId).Scan(&appIdCheck, &secretCheck)
+		var appIdCheck, secretCheck, openid, loginCode, PKCECode, PKCEMethod string
+
+		err = conn.QueryRow("SELECT o.appId, o.secret, l.openid, l.code, l.pkce, l.pkcemethod FROM oauth AS o JOIN logins AS l ON o.appId = l.appId WHERE o.appId = ? AND l.secret = ? LIMIT 1;", appId, code).Scan(&appIdCheck, &secretCheck, &openid, &loginCode, &PKCECode, &PKCEMethod)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
@@ -986,19 +965,6 @@ func main() {
 			return
 		}
 
-		activeLogin := session.Get("activeLogin")
-		if activeLogin == nil {
-			c.JSON(401, gin.H{"error": "The token has expired or was never created"})
-			return
-		}
-
-		activeLoginMap := activeLogin.(map[string]any)
-		openid, loginCode, PKCECode, PKCEMethod := activeLoginMap["openid"].(string), activeLoginMap["session"].(string), activeLoginMap["PKCECode"].(string), activeLoginMap["PKCEMethod"].(string)
-		if loginCode != code {
-			c.JSON(401, gin.H{"error": "Another login attempt is in progress or the login was never started"})
-			return
-		}
-
 		if verifyCode {
 			if PKCECode == "none" {
 				c.JSON(400, gin.H{"error": "Attempted PKCECode exchange with non-PKCECode authentication"})
@@ -1006,16 +972,16 @@ func main() {
 			} else {
 				if PKCEMethod == "S256" {
 					if sha256Base64(code_verify) != PKCECode {
-						c.JSON(403, gin.H{"error": "Invalid PKCECode"})
+						c.JSON(403, gin.H{"error": "Invalid PKCECode code"})
 						return
 					}
 				} else if PKCEMethod == "plain" {
 					if code_verify != PKCECode {
-						c.JSON(403, gin.H{"error": "Invalid PKCECode"})
+						c.JSON(403, gin.H{"error": "Invalid PKCECode code"})
 						return
 					}
 				} else {
-					c.JSON(403, gin.H{"error": "Attempted PKCECode exchange without supported PKCECode verification method"})
+					c.JSON(403, gin.H{"error": "Attempted PKCECode exchange without supported PKCECode token method"})
 					return
 				}
 			}
@@ -1024,6 +990,13 @@ func main() {
 				c.JSON(401, gin.H{"error": "Invalid secret"})
 				return
 			}
+		}
+
+		_, err = conn.Exec("DELETE FROM logins WHERE code = ?", loginCode)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
+			return
 		}
 
 		c.JSON(200, gin.H{"access_token": loginCode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
@@ -1215,6 +1188,15 @@ func main() {
 			}
 		}
 
+		_, err = conn.Exec("DELETE FROM logins WHERE creator = ?", id)
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				log.Println("[ERROR] Unknown in /api/deleteaccount logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-LOGINS"})
+				return
+			}
+		}
+
 		_, err = conn.Exec("DELETE FROM oauth WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
@@ -1227,7 +1209,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM users WHERE id = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/deleteuser users at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-USERS"})
 				return
 			}
