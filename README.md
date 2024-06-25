@@ -1,6 +1,6 @@
 # Burgerauth
 
-Burgerauth is a free-and-open-source OAuth2 server.
+Burgerauth is a free-and-open-source OAuth2/OIDC (or as I've taken to calling it, OAuth2 + OIDC) server.
 
 ## Ok, that's great, how do I host my own instance?
 
@@ -13,3 +13,7 @@ The OAuth2 protocol should be fairly standard. Burgerauth comes with OpenID Conn
 ## How long did this take to make?
 
 Yes.
+
+## What do you mean "OAuth2 + OIDC"?
+
+OIDC is not a protocol in of itself, but rather an extension on top of a fully working OAuth2 system, made useful by the OAuth2 protocol and JWK token protocol.
