@@ -12,7 +12,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -933,14 +932,7 @@ func main() {
 			"PKCECode":    code,
 			"PKCEMethod":  codeMethod,
 		}
-
-		sessionInfoStr, err := json.Marshal(sessionInfo)
-		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth sessionInfoStr at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-SESSIONINFO.")
-			return
-		}
-		session.Set("activeLogin", sessionInfoStr)
+		session.Set("activeLogin", sessionInfo)
 		err = session.Save()
 		if err != nil {
 			log.Println("[ERROR] Client-Server unknown in /api/auth session save at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
@@ -1000,8 +992,7 @@ func main() {
 			return
 		}
 
-		var activeLoginMap map[string]any
-		err = json.Unmarshal([]byte(activeLogin.(string)), &activeLoginMap)
+		activeLoginMap := activeLogin.(map[string]any)
 		openid, loginCode, PKCECode, PKCEMethod := activeLoginMap["openid"].(string), activeLoginMap["session"].(string), activeLoginMap["PKCECode"].(string), activeLoginMap["PKCEMethod"].(string)
 		if loginCode != code {
 			c.JSON(401, gin.H{"error": "Another login attempt is in progress or the login was never started"})
