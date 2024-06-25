@@ -147,13 +147,13 @@ func checkUsernameTaken(username string) (int, bool, error) {
 	err := conn.QueryRow("SELECT id FROM users WHERE lower(username) = ? LIMIT 1", username).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
+			return 0, true, nil
 		} else {
 			return 0, true, err
 		}
 	}
 
-	return id, true, nil
+	return id, false, nil
 }
 
 func init_db() {
