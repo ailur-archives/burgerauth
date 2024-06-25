@@ -35,6 +35,7 @@ import (
 
 var (
 	conn       *sql.DB
+	mem        *sql.DB
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	modulus    *big.Int
@@ -256,6 +257,22 @@ func main() {
 			init_db()
 			os.Exit(0)
 		}
+	}
+
+	mem, err = sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		log.Fatalln("[FATAL] Cannot open memory database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+	}
+	defer func(mem *sql.DB) {
+		err := mem.Close()
+		if err != nil {
+			log.Println("[ERROR] Unknown in main() memory defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		}
+	}(mem)
+
+	_, err = mem.Exec("CREATE TABLE logins (appId TEXT NOT NULL, exchangeCode TEXT NOT NULL, loginToken TEXT NOT NULL, creator INT NOT NULL, openid TEXT NOT NULL, pkce TEXT NOT NULL DEFAULT 'none', pkcemethod TEXT NOT NULL DEFAULT 'none')")
+	if err != nil {
+		log.Fatalln("[FATAL] Cannot create logins table at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 	}
 
 	privateKeyFile, err := os.ReadFile(PRIVATE_KEY_PATH)
@@ -913,7 +930,7 @@ func main() {
 			return
 		}
 
-		_, err = conn.Exec("INSERT INTO logins (appId, secret, nextsecret, code, nextcode, creator, openid, nextopenid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, "none", secret_token, "none", userid, jwt_token, "none", code, codeMethod)
+		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secret_token, userid, jwt_token, code, codeMethod)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
@@ -950,13 +967,24 @@ func main() {
 
 		var appIdCheck, secretCheck, openid, loginCode, PKCECode, PKCEMethod string
 
-		err = conn.QueryRow("SELECT o.appId, o.secret, l.openid, l.code, l.pkce, l.pkcemethod FROM oauth AS o JOIN logins AS l ON o.appId = l.appId WHERE o.appId = ? AND l.secret = ? LIMIT 1;", appId, code).Scan(&appIdCheck, &secretCheck, &openid, &loginCode, &PKCECode, &PKCEMethod)
+		err = conn.QueryRow("SELECT appId, secret FROM oauth WHERE appId = ?;", appId).Scan(&appIdCheck, &secretCheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
 				log.Println("[ERROR] Unknown in /api/tokenauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-SELECT"})
+			}
+			return
+		}
+
+		err = mem.QueryRow("SELECT loginToken, openid, pkce, pkcemethod FROM logins WHERE exchangeCode = ?", code).Scan(&loginCode, &openid, &PKCECode, &PKCEMethod)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(401, gin.H{"error": "OAuth screening failed"})
+			} else {
+				log.Println("[ERROR] Unknown in /api/tokenauth memory query at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-MEMSELECT"})
 			}
 			return
 		}
@@ -992,7 +1020,7 @@ func main() {
 			}
 		}
 
-		_, err = conn.Exec("DELETE FROM logins WHERE code = ?", loginCode)
+		_, err = mem.Exec("DELETE FROM logins WHERE code = ?", loginCode)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
@@ -1188,7 +1216,7 @@ func main() {
 			}
 		}
 
-		_, err = conn.Exec("DELETE FROM logins WHERE creator = ?", id)
+		_, err = mem.Exec("DELETE FROM logins WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/deleteaccount logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
