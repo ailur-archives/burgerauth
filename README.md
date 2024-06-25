@@ -4,7 +4,7 @@ Burgerauth is a free-and-open-source OAuth2 server.
 
 ## Ok, that's great, how do I host my own instance?
 
-First, replace the domains in the source code and templates with your own (a domain is required, not just an IP). Second, copy confit.ini.example to config.ini then tweak to your liking. Third, run `go build`, and fourth, run `./burgerauth`. Read ERRORS.md to see how to handle server errors.
+First, replace the domains in the source code and templates with your own (a domain is required, not just an IP). Second, copy config.ini.example to config.ini then tweak to your liking. Third, run `go build`, and fourth, run `./burgerauth`. Read ERRORS.md to see how to handle server errors.
 
 ## What if I am a developer?
 
