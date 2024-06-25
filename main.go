@@ -933,7 +933,7 @@ func main() {
 
 		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secret_token, userid, jwt_token, code, codeMethod)
 		if err != nil {
-			if errors.Is(err, sqlite3.ErrConstraint) {
+			if errors.Is(err, sqlite3.ErrConstraintUnique) {
 				c.String(400, "Only one login is permitted at a time. Please try again later.")
 				return
 			} else {
