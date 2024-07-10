@@ -3,7 +3,7 @@ module hectabit.org/burgerauth
 go 1.22
 
 require (
-	centrifuge.hectabit.org/HectaBit/captcha v1.4.4
+	concord.hectabit.org/HectaBit/captcha v1.4.5
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/gin-contrib/sessions v1.0.1
 	github.com/gin-gonic/gin v1.9.1

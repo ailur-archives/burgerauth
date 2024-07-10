@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Signup - Burgerauth</title>
+    <title>Signup - {{ .identifier }}</title>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -12,12 +12,11 @@
 </head>
 
 <body>
-    <p class="credit">Image by perga (@pergagreen on discord)</p>
     <p style="display: none;" id="passthrough">{{ .unique_token }}</p>
-    <img src="/static/img/background.jpg" class="background" alt="">
+    <img src="/static/img/background.png" class="background" alt="">
     <div class="inoutdiv">
         <h2 class="w300">Signup</h2>
-        <p>Signup for an account</p>
+        <p>Signup to {{ .identifier }}!</p>
         <p id="statusBox"></p>
         <input id="usernameBox" type="text" placeholder="Username">
         <input id="passwordBox" type="password" placeholder="Password">
@@ -27,7 +26,7 @@
         <button id="signupButton">Signup</button><br><br>
         <p>Already have an account? If so, <a href="/login" id="loginButton">Login</a> instead!</p>
         <p>Please note that it's impossible to reset your password, do not forget it!</p>
-        <a href="https://centrifuge.hectabit.org/Paperwork/Burgerauth/src/commit/ee82f454e69fef5fdf8b8a005f5759fc17e8d8c9/Privacy.md" id="privacyButton">Privacy &amp; Terms</a>
+        <a href="{{ .privacy }}" id="privacyButton">Privacy &amp; Terms</a>
     </div>
     <script type="text/javascript" src="../static/js/signup.js"></script>
 </body>

@@ -3,11 +3,10 @@
     <head>
         <link rel="stylesheet" href="/static/css/style.css" media="">
         <script src="/static/js/dashboard.js"></script>
-        <title>Dashboard</title>
+        <title>Dashboard - {{ .identifier }}</title>
     </head>
     <body>
-        <p class="credit">Image by perga (@pergagreen on discord)</p>
-        <img src="/static/img/background.jpg" class="background" alt="">
+        <img src="/static/img/background.png" class="background" alt="">
         <div style="position: fixed;top: 5px;"><button onclick="document.getElementById('iframe').classList.toggle('hidden');" class="acctbutton">Account</button><iframe id="iframe" src="/account" class="iframe hidden"></iframe></div>
         <div class="newoauth">
             <h2>Submit a new OAuth2 App</h2>

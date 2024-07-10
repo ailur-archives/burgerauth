@@ -1,23 +1,15 @@
 @import url("../fonts/inter.css");
 
 :root {
-    --contrast: #eee;
-    --contrast2: #fff;
     --invertdm: 0%;
-    --bar: #f4f4f4;
-    --editor: #ffffff;
     --text-color: #000000;
+    --editor: #ffffff;
+    --bar: #f4f4f4;
     --border-color: #dadada;
     --theme-color: #157efb;
-    --theme-text-color: #ffffff;
-    --exit-color: #e9e9e9;
-    --session-color: #f4f4f4;
-    --note-button: #ffffff;
-    --note-button-text-color: #ffffff;
-    --unselected-note-button-text-color: #000000;
-    --option-background: #ffffff;
-    --invert: 100%;
-    --bottomBarHover: #e4e4e4;
+    --hover-theme-color: #4990e7;
+    --nonimporant-theme-color: #4A4A4A;
+    --hover-nonimportant-theme-color: #595959;
 }
 
 /* dark mode */
@@ -25,22 +17,10 @@
 @media (prefers-color-scheme: dark) {
     :root {
         --invertdm: 100%;
-        --contrast: #2d2f21;
-        --contrast2: #2d2f21;
         --bar: #2d2f31;
-        --editor: #202124;
         --text-color: #ffffff;
+        --editor: #1E1E1E;
         --border-color: #393b3d;
-        --theme-color: #157efb;
-        --theme-text-color: #ffffff;
-        --exit-color: #454649;
-        --session-color: #2d2f31;
-        --note-button: #202124;
-        --note-button-text-color: #ffffff;
-        --unselected-note-button-text-color: #ffffff;
-        --option-background: #202124;
-        --invert: 100%;
-        --bottomBarHover: #e4e4e4;
     }
 
     .inoutdiv p {
@@ -96,22 +76,57 @@ input {
     border-color: var(--border-color);
     border-width: 1px;
     border-radius: 8px;
+    min-width: 20px;
+}
 
+@media only screen and (max-width: 600px) {
+    body {
+        background-color: var(--bar);
+    }
+    .inoutdiv {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        border-radius: 0;
+        min-width: 100%;
+        min-height: 100%;
+        transform: none;
+        padding: 5px;
+        overflow-y: auto;
+        overflow-x: auto;
+        margin: 0;
+        border: 0;
+    }
+    .inoutdiv p {
+        font-size: 14px;
+    }
+    .inoutdiv h2 {
+        font-size: 21px;
+    }
+    .background {
+        display: none;
+    }
+    .inoutdiv input {
+        width: calc(100% - 32px);
+    }
 }
 
 .inoutdiv button {
-    background-color: var(--theme-color);
     color: white;
-    padding: 10px;
     margin-right: 5px;
-    padding-left: 20px;
-    padding-right: 20px;
-
+    padding: 10px 20px;
     border: none;
-    border-radius: 8px;
-
+    border-radius: 25px;
     font-size: 14px;
+    transition: 0.125s;
+}
 
+.inoutdiv img {
+    min-width: 200px;
+    max-width: 100%;
+    border-radius: 20px;
+    background-color: white;
 }
 
 .iframe {
@@ -188,7 +203,16 @@ button {
 }
 
 button:hover {
-    background-color: #152efb;
+    background-color: var(--hover-theme-color);
+    transition: all 0.3s ease 0s;
+}
+
+.unimportant {
+    var(--nonimporant-theme-color);
+}
+
+.unimportant:hover {
+    background-color: var(--hover-nonimportant-theme-color);
     transition: all 0.3s ease 0s;
 }
 
@@ -208,7 +232,14 @@ h2 {
     z-index: -2;
     top: 0;
     width: 100%;
-    min-height: 100%;
+    height: 100%;
+    object-fit: cover;
+    -webkit-user-drag: none;
+    user-select: none;
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    pointer-events: none;
 }
 
 .hidden {

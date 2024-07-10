@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/dgrijalva/jwt-go"
 	"log"
 	"math/big"
 	"os"
@@ -23,8 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"centrifuge.hectabit.org/HectaBit/captcha"
-	"github.com/dgrijalva/jwt-go"
+	"concord.hectabit.org/HectaBit/captcha"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -65,7 +65,7 @@ func BigIntToBase64URL(num *big.Int) (string, error) {
 	return encoded, nil
 }
 
-const salt_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const saltChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 func genSalt(length int) (string, error) {
 	if length <= 0 {
@@ -80,7 +80,7 @@ func genSalt(length int) (string, error) {
 	}
 
 	for i := range salt {
-		salt[i] = salt_chars[int(randomBytes[i])%len(salt_chars)]
+		salt[i] = saltChars[int(randomBytes[i])%len(saltChars)]
 	}
 	return string(salt), nil
 }
@@ -105,8 +105,8 @@ func hash(password, salt string) (string, error) {
 	return hashString, nil
 }
 
-func verifyHash(werkzeug_hash, password string) (bool, error) {
-	parts := strings.Split(werkzeug_hash, "$")
+func verifyHash(werkzeugHash, password string) (bool, error) {
+	parts := strings.Split(werkzeugHash, "$")
 	if len(parts) != 3 || parts[0] != "scrypt:32768:8:1" {
 		return false, nil
 	}
@@ -116,7 +116,7 @@ func verifyHash(werkzeug_hash, password string) (bool, error) {
 		return false, err
 	}
 
-	return werkzeug_hash == computedHash, nil
+	return werkzeugHash == computedHash, nil
 }
 
 func getUser(id int) (string, string, string, string, error) {
@@ -156,7 +156,7 @@ func checkUsernameTaken(username string) (int, bool, error) {
 	return id, true, nil
 }
 
-func init_db() {
+func initDb() {
 	if _, err := os.Stat("database.db"); os.IsNotExist(err) {
 		if err := generateDB(); err != nil {
 			log.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
@@ -231,13 +231,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	HOST := viper.GetString("config.HOST")
-	PORT := viper.GetInt("config.PORT")
-	SECRET_KEY := viper.GetString("config.SECRET_KEY")
-	PUBLIC_KEY_PATH := viper.GetString("config.PUBLIC_KEY")
-	PRIVATE_KEY_PATH := viper.GetString("config.PRIVATE_KEY")
+	Host := viper.GetString("config.HOST")
+	Port := viper.GetInt("config.PORT")
+	privacyPolicy := viper.GetString("config.PRIVACY_POLICY")
+	hostName := viper.GetString("config.URL")
+	identifier := viper.GetString("config.IDENTIFIER")
+	keyid := viper.GetString("config.KEY_ID")
+	SecretKey := viper.GetString("config.SECRET_KEY")
+	PublicKeyPath := viper.GetString("config.PUBLIC_KEY")
+	PrivateKeyPath := viper.GetString("config.PRIVATE_KEY")
 
-	if SECRET_KEY == "supersecretkey" {
+	if SecretKey == "supersecretkey" {
 		log.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
 	}
 
@@ -254,7 +258,7 @@ func main() {
 
 	if len(os.Args) > 1 {
 		if os.Args[1] == "init_db" {
-			init_db()
+			initDb()
 			os.Exit(0)
 		}
 	}
@@ -275,7 +279,7 @@ func main() {
 		log.Fatalln("[FATAL] Cannot create logins table at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
 	}
 
-	privateKeyFile, err := os.ReadFile(PRIVATE_KEY_PATH)
+	privateKeyFile, err := os.ReadFile(PrivateKeyPath)
 	if err != nil {
 		log.Fatal("[ERROR] Cannot read private key:", err)
 	}
@@ -296,7 +300,7 @@ func main() {
 		log.Fatal("[ERROR] Failed to convert private key to RSA private key")
 	}
 
-	pubKeyFile, err := os.ReadFile(PUBLIC_KEY_PATH)
+	pubKeyFile, err := os.ReadFile(PublicKeyPath)
 	if err != nil {
 		log.Fatal("[ERROR] Cannot read public key:", err)
 	}
@@ -321,7 +325,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	store := cookie.NewStore([]byte(SECRET_KEY))
+	store := cookie.NewStore([]byte(SecretKey))
 	router.Use(sessions.Sessions("currentSession", store))
 
 	// Enable CORS
@@ -348,7 +352,7 @@ func main() {
 	})
 
 	router.GET("/login", func(c *gin.Context) {
-		c.HTML(200, "login.html", gin.H{})
+		c.HTML(200, "login.html", gin.H{"privacy": privacyPolicy, "identifier": identifier})
 	})
 
 	router.GET("/signup", func(c *gin.Context) {
@@ -356,7 +360,7 @@ func main() {
 		sessionId, err := genSalt(512)
 		if err != nil {
 			fmt.Println("[ERROR] Failed to generate session token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-SIGNUP-SESSION-GEN")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-SIGNUP-SESSION-GEN")
 			return
 		}
 		session.Options(sessions.Options{
@@ -386,11 +390,13 @@ func main() {
 		c.HTML(200, "signup.html", gin.H{
 			"captcha_image": base64.StdEncoding.EncodeToString(b64bytes.Bytes()),
 			"unique_token":  sessionId,
+			"privacy":       privacyPolicy,
+			"identifier":    identifier,
 		})
 	})
 
 	router.GET("/logout", func(c *gin.Context) {
-		c.HTML(200, "logout.html", gin.H{})
+		c.HTML(200, "logout.html", gin.H{"identifier": identifier})
 	})
 
 	router.GET("/app", func(c *gin.Context) {
@@ -407,27 +413,35 @@ func main() {
 				return
 			}
 		}
-		c.HTML(200, "main.html", gin.H{"name": name})
+		c.HTML(200, "main.html", gin.H{"name": name, "identifier": identifier})
 	})
 
 	router.GET("/dashboard", func(c *gin.Context) {
-		c.HTML(200, "dashboard.html", gin.H{})
+		c.HTML(200, "dashboard.html", gin.H{"identifier": identifier})
 	})
 
 	router.GET("/account", func(c *gin.Context) {
-		c.HTML(200, "acct.html", gin.H{})
+		c.HTML(200, "acct.html", gin.H{"identifier": identifier})
 	})
 
 	router.GET("/aeskeyshare", func(c *gin.Context) {
-		c.HTML(200, "aeskeyshare.html", gin.H{})
+		c.HTML(200, "aeskeyshare.html", gin.H{"identifier": identifier})
+	})
+
+	router.GET("/privacy", func(c *gin.Context) {
+		c.Redirect(301, privacyPolicy)
 	})
 
 	router.GET("/.well-known/openid-configuration", func(c *gin.Context) {
-		c.HTML(200, "openid.html", gin.H{})
+		c.HTML(200, "openid.html", gin.H{"hostName": hostName})
 	})
 
 	router.GET("/api/version", func(c *gin.Context) {
 		c.String(200, "Burgerauth Version 1.3")
+	})
+
+	router.GET("/api/servicename", func(c *gin.Context) {
+		c.JSON(200, gin.H{"name": identifier})
 	})
 
 	router.POST("/api/signup", func(c *gin.Context) {
@@ -439,10 +453,20 @@ func main() {
 			return
 		}
 
-		username := data["username"].(string)
-		password := data["password"].(string)
+		username, ok := data["username"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		password, ok := data["password"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		if data["unique_token"].(string) != session.Get("unique_token") {
+			log.Println("yes, it's this error")
+			log.Println(session.Get("unique_token"), data["unique_token"])
 			c.JSON(403, gin.H{"error": "Invalid token"})
 			return
 		}
@@ -459,7 +483,7 @@ func main() {
 		_, taken, err := checkUsernameTaken(username)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
 			return
 		}
 		if taken {
@@ -470,20 +494,20 @@ func main() {
 		salt, err := genSalt(16)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SALT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SALT"})
 			return
 		}
 		hashedPassword, err := hash(password, salt)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup hash() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-HASH"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-HASH"})
 			return
 		}
 
 		sub, err := genSalt(255)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SUB"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SUB"})
 			return
 		}
 		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), sub)
@@ -496,21 +520,21 @@ func main() {
 		userid, _, err := checkUsernameTaken(username)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
 			return
 		}
 
 		randomChars, err := genSalt(512)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup token genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONSALT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONSALT"})
 			return
 		}
 
 		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomChars, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/signup session Exec() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONINSERT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONINSERT"})
 			return
 		}
 
@@ -525,15 +549,30 @@ func main() {
 			return
 		}
 
-		username := data["username"].(string)
-		password := data["password"].(string)
-		passwordChange := data["password"].(string)
-		newPass := data["password"].(string)
-
+		username, ok := data["username"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		password, ok := data["password"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		passwordChange, ok := data["password"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		newPass, ok := data["password"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 		userid, taken, err := checkUsernameTaken(username)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/login checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-CHECKUSERNAME"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-CHECKUSERNAME"})
 			return
 		}
 		if !taken {
@@ -544,14 +583,14 @@ func main() {
 		_, _, userPassword, _, err := getUser(userid)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/login getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-GETUSER"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-GETUSER"})
 			return
 		}
 
 		passwordCheck, err := verifyHash(userPassword, password)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/login password check at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHECK"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHECK"})
 			return
 		}
 		if !passwordCheck {
@@ -562,14 +601,14 @@ func main() {
 		randomChars, err := genSalt(512)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/login token genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONSALT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONSALT"})
 			return
 		}
 
 		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomChars, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/login session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONINSERT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONINSERT"})
 			return
 		}
 
@@ -577,13 +616,13 @@ func main() {
 			hashPassword, err := hash(newPass, "")
 			if err != nil {
 				log.Println("[ERROR] Unknown in /api/login password hash at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDHASH"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDHASH"})
 				return
 			}
 			_, err = conn.Exec("UPDATE users SET password = ? WHERE username = ?", hashPassword, username)
 			if err != nil {
 				log.Println("[ERROR] Unknown in /api/login password change at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHANGE"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHANGE"})
 				return
 			}
 		}
@@ -599,7 +638,11 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, userid, err := getSession(secretKey)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -613,7 +656,7 @@ func main() {
 			return
 		} else if err != nil {
 			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-USERINFO-GETUSER"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-USERINFO-GETUSER"})
 			return
 		}
 
@@ -642,7 +685,7 @@ func main() {
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-BLACKLIST"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-BLACKLIST"})
 				return
 			}
 		}
@@ -686,7 +729,7 @@ func main() {
 			return
 		} else if err != nil {
 			log.Println("[ERROR] Unknown in /userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-GETUSER"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-GETUSER"})
 			return
 		}
 
@@ -701,7 +744,11 @@ func main() {
 			return
 		}
 
-		token := data["access_token"].(string)
+		token, ok := data["access_token"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		var blacklisted bool
 		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
@@ -711,7 +758,7 @@ func main() {
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/sub blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-BLACKLIST"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-BLACKLIST"})
 				return
 			}
 		}
@@ -726,8 +773,6 @@ func main() {
 		}
 
 		var claims jwt.MapClaims
-		var ok bool
-
 		if parsedToken.Valid {
 			claims, ok = parsedToken.Claims.(jwt.MapClaims)
 			if !ok {
@@ -755,7 +800,7 @@ func main() {
 			return
 		} else if err != nil {
 			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-GETUSER"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-GETUSER"})
 			return
 		}
 
@@ -770,7 +815,11 @@ func main() {
 			return
 		}
 
-		token := data["access_token"].(string)
+		token, ok := data["access_token"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 		var blacklisted bool
 		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
 		if err == nil {
@@ -779,7 +828,7 @@ func main() {
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/loggedin blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGGEDIN-BLACKLIST"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGGEDIN-BLACKLIST"})
 				return
 			}
 		}
@@ -794,8 +843,6 @@ func main() {
 		}
 
 		var claims jwt.MapClaims
-		var ok bool
-
 		if parsedToken.Valid {
 			claims, ok = parsedToken.Claims.(jwt.MapClaims)
 			if !ok {
@@ -825,7 +872,7 @@ func main() {
 		appId := c.Request.URL.Query().Get("client_id")
 		code := c.Request.URL.Query().Get("code_challenge")
 		codeMethod := c.Request.URL.Query().Get("code_challenge_method")
-		redirect_uri := c.Request.URL.Query().Get("redirect_uri")
+		redirectUri := c.Request.URL.Query().Get("redirect_uri")
 		state := c.Request.URL.Query().Get("state")
 		nonce := c.Request.URL.Query().Get("nonce")
 		deny := c.Request.URL.Query().Get("deny")
@@ -839,18 +886,18 @@ func main() {
 				c.String(401, "OAuth screening failed")
 			} else {
 				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-SELECT")
+				c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-SELECT")
 			}
 			return
 		}
 
-		if !(redirectUriCheck == redirect_uri) {
+		if !(redirectUriCheck == redirectUri) {
 			c.String(401, "Redirect URI does not match")
 			return
 		}
 
 		if deny == "true" {
-			c.Redirect(302, redirect_uri+"?error=access_denied&state="+state)
+			c.Redirect(302, redirectUri+"?error=access_denied&state="+state)
 			return
 		}
 
@@ -864,7 +911,7 @@ func main() {
 			nonce, err = genSalt(512)
 			if err != nil {
 				log.Println("[ERROR] Unknown in /api/auth nonce genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-NONCE")
+				c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-NONCE")
 				return
 			}
 		}
@@ -881,13 +928,13 @@ func main() {
 			return
 		} else if err != nil {
 			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-GETUSER")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-GETUSER")
 			return
 		}
 
 		dataTemplate := jwt.MapClaims{
 			"sub":       sub[:255],
-			"iss":       "https://auth.hectabit.org",
+			"iss":       hostName,
 			"name":      username,
 			"aud":       appId,
 			"exp":       time.Now().Unix() + 2592000,
@@ -907,47 +954,47 @@ func main() {
 
 		tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
 		tokenTemp.Header["kid"] = "burgerauth"
-		jwt_token, err := tokenTemp.SignedString(privateKey)
+		jwtToken, err := tokenTemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
 			return
 		}
 
 		secretTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplateTwo)
 		secretTemp.Header["kid"] = "burgerauth"
-		secret_token, err := secretTemp.SignedString(privateKey)
+		secretToken, err := secretTemp.SignedString(privateKey)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN.")
 			return
 		}
 
 		randomBytes, err := genSalt(512)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth randomBytes at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-RANDOMBYTES.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-RANDOMBYTES.")
 			return
 		}
 
 		_, err = mem.Exec("DELETE FROM logins WHERE creator = ?", userid)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-DELETE.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-DELETE.")
 			return
 		}
 
-		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secret_token, userid, jwt_token, code, codeMethod)
+		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secretToken, userid, jwtToken, code, codeMethod)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
 			return
 		}
 
 		if randomBytes != "" {
-			c.Redirect(302, redirect_uri+"?code="+randomBytes+"&state="+state)
+			c.Redirect(302, redirectUri+"?code="+randomBytes+"&state="+state)
 		} else {
-			c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-REDIRECT.")
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-REDIRECT.")
 			log.Println("[ERROR] Secret key not found at", strconv.FormatInt(time.Now().Unix(), 10))
 		}
 	})
@@ -962,11 +1009,11 @@ func main() {
 
 		appId := data.Get("client_id")
 		code := data.Get("code")
-		code_verify := data.Get("code_verifier")
+		codeVerify := data.Get("code_verifier")
 		secret := data.Get("client_secret")
 
 		var verifyCode bool
-		if code_verify == "" {
+		if codeVerify == "" {
 			verifyCode = false
 		} else {
 			verifyCode = true
@@ -980,7 +1027,7 @@ func main() {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
 				log.Println("[ERROR] Unknown in /api/tokenauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-SELECT"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-SELECT"})
 			}
 			return
 		}
@@ -991,7 +1038,7 @@ func main() {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
 				log.Println("[ERROR] Unknown in /api/tokenauth memory query at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-MEMSELECT"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-MEMSELECT"})
 			}
 			return
 		}
@@ -1006,12 +1053,12 @@ func main() {
 				return
 			} else {
 				if PKCEMethod == "S256" {
-					if sha256Base64(code_verify) != PKCECode {
+					if sha256Base64(codeVerify) != PKCECode {
 						c.JSON(403, gin.H{"error": "Invalid PKCECode code"})
 						return
 					}
 				} else if PKCEMethod == "plain" {
-					if code_verify != PKCECode {
+					if codeVerify != PKCECode {
 						c.JSON(403, gin.H{"error": "Invalid PKCECode code"})
 						return
 					}
@@ -1030,7 +1077,7 @@ func main() {
 		_, err = mem.Exec("DELETE FROM logins WHERE loginToken = ?", loginCode)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
 			return
 		}
 
@@ -1045,8 +1092,16 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
-		appId := data["appId"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		appId, ok := data["appId"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1060,7 +1115,7 @@ func main() {
 				c.JSON(400, gin.H{"error": "AppID Not found"})
 			} else {
 				log.Println("[ERROR] Unknown in /api/deleteauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEAUTH-DELETE"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEAUTH-DELETE"})
 			}
 		} else {
 			c.JSON(200, gin.H{"success": "true"})
@@ -1075,9 +1130,21 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
-		name := data["name"].(string)
-		redirectUri := data["redirectUri"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		name, ok := data["name"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		redirectUri, ok := data["redirectUri"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1089,7 +1156,7 @@ func main() {
 		secret, err := genSalt(512)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/newauth secretgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
 			return
 		}
 		for {
@@ -1099,14 +1166,14 @@ func main() {
 					break
 				} else {
 					log.Println("[ERROR] Unknown in /api/newauth secretselect at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETSELECT"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETSELECT"})
 					return
 				}
 			} else {
 				secret, err = genSalt(512)
 				if err != nil {
 					log.Println("[ERROR] Unknown in /api/newauth secretgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
 					return
 				}
 			}
@@ -1115,7 +1182,7 @@ func main() {
 		appId, err := genSalt(32)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/newauth appidgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDGEN"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDGEN"})
 			return
 		}
 
@@ -1127,14 +1194,14 @@ func main() {
 					break
 				} else {
 					log.Println("[ERROR] Unknown in /api/newauth appidcheck at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDCHECK"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDCHECK"})
 					return
 				}
 			} else {
 				appId, err = genSalt(32)
 				if err != nil {
 					log.Println("[ERROR] Unknown in /api/newauth appidgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-LAPPIDGEN"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-LAPPIDGEN"})
 					return
 				}
 			}
@@ -1143,7 +1210,7 @@ func main() {
 		_, err = conn.Exec("INSERT INTO oauth (name, appId, creator, secret, redirectUri) VALUES (?, ?, ?, ?, ?)", name, appId, id, secret, redirectUri)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /api/newauth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-INSERT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-INSERT"})
 			return
 		}
 
@@ -1158,7 +1225,11 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1168,14 +1239,14 @@ func main() {
 
 		rows, err := conn.Query("SELECT appId, name, rdiruri FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-QUERY"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-QUERY"})
 			return
 		}
 		defer func(rows *sql.Rows) {
 			err := rows.Close()
 			if err != nil {
 				log.Println("[ERROR] Unknown in /api/listauth rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-ROWSCLOSE"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-ROWSCLOSE"})
 				return
 			}
 		}(rows)
@@ -1184,14 +1255,14 @@ func main() {
 		for rows.Next() {
 			var appId, name, redirectUri string
 			if err := rows.Scan(&appId, &name, &redirectUri); err != nil {
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-SCAN"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-SCAN"})
 				return
 			}
 			template := map[string]interface{}{"appId": appId, "name": name, "redirectUri": redirectUri}
 			dataTemplate = append(dataTemplate, template)
 		}
 		if err := rows.Err(); err != nil {
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-ROWSERR"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-ROWSERR"})
 			return
 		}
 
@@ -1206,7 +1277,11 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1218,7 +1293,7 @@ func main() {
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/deleteaccount userdata at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-USERDATA"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-USERDATA"})
 				return
 			}
 		}
@@ -1227,7 +1302,7 @@ func main() {
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/deleteaccount logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-LOGINS"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-LOGINS"})
 				return
 			}
 		}
@@ -1236,7 +1311,7 @@ func main() {
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/deleteuser oauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-OAUTH"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-OAUTH"})
 				return
 			}
 		}
@@ -1245,7 +1320,7 @@ func main() {
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-USERS"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-USERS"})
 				return
 			}
 		}
@@ -1261,7 +1336,11 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1273,7 +1352,7 @@ func main() {
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				log.Println("[ERROR] Unknown in /api/sessions/list at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST"})
 				return
 			}
 		}
@@ -1281,7 +1360,7 @@ func main() {
 			err := rows.Close()
 			if err != nil {
 				log.Println("[ERROR] Unknown in /api/sessions/list rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-ROWSCLOSE"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-ROWSCLOSE"})
 				return
 			}
 		}(rows)
@@ -1291,7 +1370,7 @@ func main() {
 			var id, sessionId, device string
 			thisSession := false
 			if err := rows.Scan(&id, &sessionId, &device); err != nil {
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-SCAN"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-SCAN"})
 				return
 			}
 			if sessionId == secretKey {
@@ -1301,7 +1380,7 @@ func main() {
 			dataTemplate = append(dataTemplate, template)
 		}
 		if err := rows.Err(); err != nil {
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-ERR"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-ERR"})
 			return
 		}
 
@@ -1316,8 +1395,16 @@ func main() {
 			return
 		}
 
-		secretKey := data["secretKey"].(string)
-		sessionId := data["sessionId"].(string)
+		secretKey, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		sessionId, ok := data["sessionId"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
 		_, id, err := getSession(secretKey)
 		if err != nil {
@@ -1331,7 +1418,7 @@ func main() {
 				c.JSON(422, gin.H{"error": "SessionID Not found"})
 			} else {
 				log.Println("[ERROR] Unknown in /api/sessions/remove at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-REMOVE"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-REMOVE"})
 			}
 		} else {
 			c.JSON(200, gin.H{"success": "true"})
@@ -1346,14 +1433,18 @@ func main() {
 			return
 		}
 
-		masterKey := data["masterKey"].(string)
+		masterKey, ok := data["masterKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
 
-		if masterKey == SECRET_KEY {
+		if masterKey == SecretKey {
 			rows, err := conn.Query("SELECT * FROM users ORDER BY id DESC")
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					log.Println("[ERROR] Unknown in /api/listusers at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-QUERY"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-QUERY"})
 					return
 				}
 			}
@@ -1361,7 +1452,7 @@ func main() {
 				err := rows.Close()
 				if err != nil {
 					log.Println("[ERROR] Unknown in /api/listusers rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-ROWSCLOSE"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-ROWSCLOSE"})
 					return
 				}
 			}(rows)
@@ -1370,14 +1461,14 @@ func main() {
 			for rows.Next() {
 				var id, username string
 				if err := rows.Scan(&id, &username); err != nil {
-					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-SCAN"})
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-SCAN"})
 					return
 				}
 				template := map[string]interface{}{"id": id, "username": username}
 				datatemplate = append(datatemplate, template)
 			}
 			if err := rows.Err(); err != nil {
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-ERR"})
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-ERR"})
 				return
 			}
 
@@ -1389,14 +1480,14 @@ func main() {
 		mod, err := BigIntToBase64URL(modulus)
 		if err != nil {
 			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-MODULUS"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-MODULUS"})
 			return
 		}
 
 		exp, err := Int64ToBase64URL(int64(exponent))
 		if err != nil {
 			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-EXPONENT"})
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-EXPONENT"})
 			return
 		}
 		keys := gin.H{
@@ -1405,7 +1496,7 @@ func main() {
 					"kty": "RSA",
 					"alg": "RS256",
 					"use": "sig",
-					"kid": "burgerauth",
+					"kid": keyid,
 					"n":   mod,
 					"e":   exp,
 				},
@@ -1416,8 +1507,8 @@ func main() {
 	})
 
 	log.Println("[INFO] Server started at", time.Now().Unix())
-	log.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + HOST + " on port " + strconv.Itoa(PORT) + ".")
-	err = router.Run(HOST + ":" + strconv.Itoa(PORT))
+	log.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + Host + " on port " + strconv.Itoa(Port) + ".")
+	err = router.Run(Host + ":" + strconv.Itoa(Port))
 	if err != nil {
 		log.Fatalln("[FATAL] Server failed to begin operations at", time.Now().Unix(), err)
 	}

@@ -1,0 +1,18 @@
+[config]
+# This is the IP burgerauth runs on. Leave as default to access outside of your server and use 127.0.0.1 for a reverse-proxy.
+HOST = 0.0.0.0
+# This is the host burgerauth runs on. Use this for an internal reverse-proxy or change to port 80 to allow HTTP communication (not recommended).
+PORT = 8080
+# Change this to a random stream of characters, as long as possible. It is used for AES security.
+SECRET_KEY = supersecretkey
+# Change these to the actual path of your keys. To generate them, view README.md.
+PUBLIC_KEY = keys/public.pem
+PRIVATE_KEY = keys/private.pem
+# This is the URI to the privacy policy. Leave as default to use the default burgerauth policy.
+PRIVACY_POLICY = https://concord.hectabit.org/Paperwork/Burgerauth/src/commit/3a58ec33ead87aadd542c5838b3162ed6cedc044/Privacy.md
+# This is the URL the server is running on. Change this to your URL. This must be the URL in front of your reverse-proxy, and should not be an IP as to enforce HTTPS.
+URL = https://auth.hectabit.org
+# This is the name of the program you wish users to see.
+IDENTIFIER = Burgerauth
+# This is the identifier for your key in JWK. It is ok to set it to a random string of characters.
+KEY_ID = burgerauth

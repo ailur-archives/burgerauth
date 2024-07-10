@@ -9,12 +9,6 @@ if (localStorage.getItem("DONOTSHARE-password") !== null) {
     throw new Error();
 }
 
-let remote = localStorage.getItem("homeserverURL")
-if (remote == null) {
-    localStorage.setItem("homeserverURL", "https://auth.hectabit.org")
-    remote = "https://auth.hectabit.org"
-}
-
 let usernameBox = document.getElementById("usernameBox")
 let passwordBox = document.getElementById("passwordBox")
 let statusBox = document.getElementById("statusBox")
@@ -28,20 +22,26 @@ inputNameBox.innerText = "Username:"
 let currentInputType = 0
 
 function showInput(inputType) {
-    if (inputType == 0) {
+    if (inputType === 0) {
         usernameBox.classList.remove("hidden")
         passwordBox.classList.add("hidden")
         backButton.classList.add("hidden")
         inputNameBox.innerText = "Username:"
-        statusBox.innerText = "Login to your Hectabit account!"
-        currentInputType = 0
-    } else if (inputType == 1) {
+        let serviceName
+        fetch("/api/servicename")
+            .then((response) => response.json())
+            .then((response) => {
+                serviceName = response["name"]
+                statusBox.innerText = "Login to your " + serviceName + " account!"
+                currentInputType = 0
+            })
+    } else if (inputType === 1) {
         usernameBox.classList.add("hidden")
         passwordBox.classList.remove("hidden")
         backButton.classList.remove("hidden")
         inputNameBox.innerText = "Password:"
         currentInputType = 1
-    } else if (inputType == 2) {
+    } else if (inputType === 2) {
         usernameBox.classList.add("hidden")
         passwordBox.classList.add("hidden")
         signupButton.classList.add("hidden")
@@ -75,9 +75,9 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById("homeserver").innerText = "Your homeserver is: " + remote + ". "
 });
 
-signupButton.addEventListener("click", (event) => {
+signupButton.addEventListener("click", () => {
     if (passwordBox.classList.contains("hidden")) {
-        if (usernameBox.value == "") {
+        if (usernameBox.value === "") {
             statusBox.innerText = "A username is required!"
             return
         } else {
@@ -89,7 +89,7 @@ signupButton.addEventListener("click", (event) => {
             let username = usernameBox.value
             let password = passwordBox.value
 
-            if (password == "") {
+            if (password === "") {
                 statusBox.innerText = "A password is required!"
                 return
             }
@@ -98,28 +98,15 @@ signupButton.addEventListener("click", (event) => {
             showElements(true)
             statusBox.innerText = "Signing in..."
 
-            async function hashpassold(pass) {
-                const key = await hashwasm.argon2id({
-                    password: pass,
-                    salt: await hashwasm.sha512(pass),
-                    parallelism: 1,
-                    iterations: 256,
-                    memorySize: 512,
-                    hashLength: 32,
-                    outputType: "encoded"
-                });
-                return key
-            };
-
             async function hashpass(pass) {
                 let key = pass
                 for (let i = 0; i < 128; i++) {
                     key = await hashwasm.sha3(key)
                 }
                 return key
-            };
+            }
 
-            fetch(remote + "/api/login", {
+            fetch("/api/login", {
                 method: "POST",
                 body: JSON.stringify({
                     username: username,
@@ -135,51 +122,17 @@ signupButton.addEventListener("click", (event) => {
                 .then((response) => {
                     async function doStuff() {
                         let responseData = await response.json()
-                        if (response.status == 200) {
+                        if (response.status === 200) {
                             localStorage.setItem("DONOTSHARE-secretkey", responseData["key"])
                             localStorage.setItem("DONOTSHARE-password", await hashwasm.sha512(password))
 
                             window.location.href = "/app" + window.location.search
                         }
-                        else if (response.status == 401) {
-                            console.log("Trying oldhash")
-                            fetch(remote + "/api/login", {
-                                method: "POST",
-                                body: JSON.stringify({
-                                    username: username,
-                                    password: await hashpassold(password),
-                                    passwordchange: "yes",
-                                    newpass: await hashpass(password)
-                                }),
-                                headers: {
-                                    "Content-Type": "application/json; charset=UTF-8"
-                                }
-                            })
-                                .then((response) => response)
-                                .then((response) => {
-                                    async function doStuff2() {
-                                        let responseData = await response.json()
-                                        if (response.status == 200) {
-                                            localStorage.setItem("DONOTSHARE-secretkey", responseData["key"])
-                                            localStorage.setItem("DONOTSHARE-password", await hashwasm.sha512(password))
-
-                                            window.location.href = "/app" + window.location.search
-                                        }
-                                        else if (response.status == 401) {
-                                            statusBox.innerText = "Wrong username or password..."
-                                            showInput(1)
-                                            showElements(true)
-                                        }
-                                        else {
-                                            statusBox.innerText = "Something went wrong! (error code: " + response.status + ")"
-                                            showInput(1)
-                                            showElements(true)
-                                        }
-                                    }
-                                    doStuff2()
-                                });
-                        }
-                        else {
+                        else if (response.status === 401) {
+                            statusBox.innerText = "Wrong username or password..."
+                            showInput(1)
+                            showElements(true)
+                        } else {
                             statusBox.innerText = "Something went wrong! (error code: " + response.status + ")"
                             showInput(1)
                             showElements(true)
@@ -192,7 +145,7 @@ signupButton.addEventListener("click", (event) => {
     }
 });
 
-backButton.addEventListener("click", (event) => {
+backButton.addEventListener("click", () => {
     showInput(0)
 });
 
@@ -201,15 +154,13 @@ showInput(0)
 document.getElementById("signuprdirButton").addEventListener("click", function(event) {
     event.preventDefault();
 
-    var queryString = window.location.search;
-    var newURL = "/signup" + queryString;
-    window.location.href = newURL;
+    const queryString = window.location.search;
+    window.location.href = "/signup" + queryString;
 });
 
 document.getElementById("privacyButton").addEventListener("click", function(event) {
     event.preventDefault();
 
-    var queryString = window.location.search;
-    var newURL = "/privacy" + queryString;
-    window.location.href = newURL;
+    const queryString = window.location.search;
+    window.location.href = "/privacy" + queryString;
 });

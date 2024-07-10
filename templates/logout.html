@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Burgerauth</title>
+    <title>Log out - {{ .identifier }}</title>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <link rel="icon" href="/static/svg/favicon.svg">
@@ -11,6 +11,5 @@
 <script>
     localStorage.removeItem("DONOTSHARE-secretkey")
     localStorage.removeItem("DONOTSHARE-password")
-    localStorage.removeItem("CACHE-username")
     window.location.replace("/login")
 </script>

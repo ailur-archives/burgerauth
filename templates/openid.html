@@ -1,9 +1,9 @@
 {
-  "issuer": "https://auth.hectabit.org",
-  "authorization_endpoint": "https://auth.hectabit.org/login",
-  "token_endpoint": "https://auth.hectabit.org/api/tokenauth",
-  "userinfo_endpoint": "https://auth.hectabit.org/userinfo",
-  "jwks_uri": "https://auth.hectabit.org/.well-known/jwks.json",
+  "issuer": "{{ .hostName }}",
+  "authorization_endpoint": "{{ .hostName }}/login",
+  "token_endpoint": "{{ .hostName }}/api/tokenauth",
+  "userinfo_endpoint": "{{ .hostName }}/userinfo",
+  "jwks_uri": "{{ .hostName }}/.well-known/jwks.json",
   "response_types_supported": ["code"],
   "subject_types_supported": ["public"]
 }

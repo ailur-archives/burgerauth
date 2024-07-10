@@ -11,7 +11,7 @@ if (remote == null) {
 
 
 function attempt() {
-    if (document.getElementById("appidbox").value != "") {
+    if (document.getElementById("appidbox").value !== "") {
         fetch(origin + "/api/newauth", {
             method: "POST",
             headers: {

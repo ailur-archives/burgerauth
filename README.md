@@ -4,7 +4,17 @@ Burgerauth is a free-and-open-source OAuth2/OIDC (or as I've taken to calling it
 
 ## Ok, that's great, how do I host my own instance?
 
-First, replace the domains in the source code and templates with your own (a domain is required, not just an IP). Second, copy config.ini.example to config.ini then tweak to your liking. Third, run `go build`, and fourth, run `./burgerauth`. Read ERRORS.md to see how to handle server errors.
+First, replace the domains in the source code and templates with your own (a domain is required, not just an IP).
+
+Second, copy config.ini.example to config.ini then tweak to your liking, making sure to point to a valid path for where you are going to generate your RSA keypair.
+
+Third, run `go build`.
+
+Fourth, generate a RSA keypair using
+`openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048`
+`openssl rsa -pubout -in private.pem -out public.pem`
+
+Fifth, run `./burgerauth`. Read ERRORS.md to see how to handle server errors.
 
 ## What if I am a developer?
 
