@@ -4,12 +4,13 @@
     --invertdm: 0%;
     --text-color: #000000;
     --editor: #ffffff;
-    --bar: #f4f4f4;
     --border-color: #dadada;
-    --theme-color: #157efb;
+    --theme-color: #1c71d8;
     --hover-theme-color: #4990e7;
-    --nonimporant-theme-color: #4A4A4A;
-    --hover-nonimportant-theme-color: #595959;
+    --nonimporant-theme-color: #EBEBEB;
+    --hover-nonimportant-theme-color: #dbdbdb;
+    --nonimportant-text-color: #000;
+    --inoutdiv: #fafafa;
 }
 
 /* dark mode */
@@ -17,9 +18,10 @@
 @media (prefers-color-scheme: dark) {
     :root {
         --invertdm: 100%;
-        --bar: #2d2f31;
+        --inoutdiv: #2d2f31;
         --text-color: #ffffff;
         --editor: #1E1E1E;
+        --nonimportant-text-color: #fff;
         --border-color: #393b3d;
     }
 
@@ -49,6 +51,10 @@ h6 {
     white-space: break-spaces;
 }
 
+p#status {
+    overflow-wrap: break-word;
+}
+
 body {
     margin: 0;
     background-color: var(--editor);
@@ -62,13 +68,18 @@ body {
     margin: 10%;
     padding: 30px;
     border: solid 1px var(--border-color);
-    background-color: var(--bar);
+    background-color: var(--inoutdiv);
+}
+
+table {
+    border-spacing: 0;
 }
 
 input {
-    width: calc(100% - 120px);
+    width: calc(100% - 35px);
+    margin-left: 10px;
+    margin-right: 10px;
     height: 30px;
-    margin-bottom: 10px;
     padding-left: 10px;
     padding-right: 10px;
 
@@ -79,17 +90,22 @@ input {
     min-width: 20px;
 }
 
+.inputBox input {
+    margin-left: 5px;
+    margin-right: 0;
+}
+
 @media only screen and (max-width: 600px) {
     body {
-        background-color: var(--bar);
+        background-color: var(--inoutdiv);
     }
     .inoutdiv {
         position: absolute;
         top: 0;
-        left: 0;
-        right: 0;
+        left: 10px;
+        right: 10px;
         border-radius: 0;
-        min-width: 100%;
+        min-width: calc(100% - 20px);
         min-height: 100%;
         transform: none;
         padding: 5px;
@@ -112,16 +128,6 @@ input {
     }
 }
 
-.inoutdiv button {
-    color: white;
-    margin-right: 5px;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 25px;
-    font-size: 14px;
-    transition: 0.125s;
-}
-
 .inoutdiv img {
     min-width: 200px;
     max-width: 100%;
@@ -134,7 +140,7 @@ input {
     right: 5px;
     top: 47px;
     border: none;
-    height: 276px;
+    height: 278px;
     width: 400px;
     transform: translateX(26px);
 }
@@ -159,7 +165,7 @@ input {
     text-shadow: black 1px 1px 5px;
 }
 
-.newoauth, .oauthlist, .oauthentry {
+.newoauth, .oauthlist, .sessionentry, .oauthentry {
     text-align: center;
     width: calc(100% - 17.5vh);
     margin-top: 7vh;
@@ -171,35 +177,43 @@ input {
     border-radius: 8px;
     border-width: 1px;
     font-size: 17px;
-    background-color: var(--bar);
+    background-color: var(--inoutdiv);
     border-color: var(--border-color);
 }
 
-.oauthentry {
+.oauthentry, .sessionentry {
     display: flex;
     flex-direction: column;
     justify-content: center;
     padding: 5px;
+    margin-top: 0;
+    margin-bottom: 20px;
 }
 
-.oauthentry button {
+.oauthentry button, .sessionentry button {
     padding: 10px;
     background-color: red;
     color: white
 }
 
-.oauthentry button:hover {
+.oauthentry button:hover, .sessionentry button:hover {
     background-color: black;
+}
+
+.oauthentry img, .sessionentry img {
+    max-height: 64px;
+    margin-top: 10px;
 }
 
 button {
     background-color: var(--theme-color);
     color: white;
-    padding: 10px;
     margin-right: 5px;
+    padding: 10px 20px;
     border: none;
-    border-radius: 8px;
+    border-radius: 25px;
     font-size: 14px;
+    transition: 0.125s;
 }
 
 button:hover {
@@ -207,8 +221,20 @@ button:hover {
     transition: all 0.3s ease 0s;
 }
 
+.inoutdiv .inputContainer {
+    margin-bottom: 20px;
+    margin-right: 20px;
+    width: 100%;
+    display: flex;
+}
+
+.inoutdiv .inputBox {
+    width: 100%;
+}
+
 .unimportant {
-    var(--nonimporant-theme-color);
+    background-color: var(--nonimporant-theme-color);
+    color: var(--nonimportant-text-color) !important;
 }
 
 .unimportant:hover {
@@ -240,6 +266,12 @@ h2 {
     -webkit-user-select: none;
     -ms-user-select: none;
     pointer-events: none;
+}
+
+.vAlign {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .hidden {

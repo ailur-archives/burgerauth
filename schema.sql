@@ -9,7 +9,8 @@ CREATE TABLE users (
     created TEXT NOT NULL,
     username TEXT NOT NULL,
     password TEXT NOT NULL,
-    uniqueid TEXT NOT NULL
+    uniqueid TEXT NOT NULL,
+    migrated INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE userdata (
@@ -32,9 +33,11 @@ CREATE TABLE blacklist (
 );
 
 CREATE TABLE oauth (
-    appId TEXT NOT NULL,
+    appId TEXT NOT NULL UNIQUE,
     secret TEXT NOT NULL,
     creator INTEGER NOT NULL,
-    rdiruri TEXT NOT NULL,
-    name TEXT NOT NULL
+    redirectUri TEXT NOT NULL,
+    name TEXT NOT NULL,
+    keyShareUri TEXT NOT NULL DEFAULT 'none',
+    scopes TEXT NOT NULL DEFAULT '["openid"]'
 )

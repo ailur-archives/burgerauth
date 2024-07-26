@@ -1,25 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
-        <link rel="stylesheet" href="/static/css/style.css" media="">
-        <script src="/static/js/dashboard.js"></script>
         <title>Dashboard - {{ .identifier }}</title>
+        <meta charset="UTF-8"/>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <link rel="icon" href="/static/svg/favicon.svg">
+        <link rel="stylesheet" type="text/css" href="/static/css/style.css"/>
     </head>
     <body>
         <img src="/static/img/background.png" class="background" alt="">
-        <div style="position: fixed;top: 5px;"><button onclick="document.getElementById('iframe').classList.toggle('hidden');" class="acctbutton">Account</button><iframe id="iframe" src="/account" class="iframe hidden"></iframe></div>
         <div class="newoauth">
-            <h2>Submit a new OAuth2 App</h2>
-            <p id="status"></p>
-            <p>App Name:</p>
-            <input id="appidbox">
-            <p>Redirect URI:</p>
-            <input id="rdiruribox">
-            <br>
-            <button style="margin-top: 10px;" onclick="attempt()">Submit</button>
+            <h2>Dashboard</h2>
+            <p>Welcome to the Burgerauth dashboard!</p>
+            <button id="devAcctSwitcher">Switch to developer view</button>
         </div>
-        <div class="oauthlist" id="oauthlist" style="margin-bottom: 30px;">
-            <h2>Your existing apps</h2>
+        <div id="developers" class="hidden">
+            <div class="newoauth">
+                <h2>Submit a new OAuth2 App</h2>
+                <p id="status"></p>
+                <p>App Name:</p>
+                <input id="appidbox">
+                <p>Redirect URI:</p>
+                <input id="rdiruribox">
+                <p>Enable OpenID:</p>
+                <input type="checkbox" id="openidbox">
+                <p>AESKeyShare URI (optional, will add the aeskeyshare scope):</p>
+                <input id="aeskeysharebox">
+                <br>
+                <button style="margin-top: 10px;" onclick="attempt()">Submit</button>
+            </div>
+            <div class="oauthlist" id="oauthlist" style="margin-bottom: 30px;">
+                <h2>Your existing apps</h2>
+            </div>
         </div>
+        <div id="account">
+            <div class="newoauth">
+                <h2>Account settings</h2>
+                <p id="namebox">Loading...</p>
+                <p id="datebox"></p>
+                <button onclick="window.location.href = '/logout';">Logout</button><br style="">
+                <button onclick="deleteacct()" style="margin-top: 5px;">Delete Account</button>
+            </div>
+            <div class="oauthlist" id="sessionsList" style="margin-bottom: 30px;">
+                <h2>Sessions</h2>
+            </div>
+        </div>
+        <script src="/static/js/dashboard.js"></script>
     </body>
 </html>

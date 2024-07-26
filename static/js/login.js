@@ -12,9 +12,11 @@ if (localStorage.getItem("DONOTSHARE-password") !== null) {
 let usernameBox = document.getElementById("usernameBox")
 let passwordBox = document.getElementById("passwordBox")
 let statusBox = document.getElementById("statusBox")
+let nextButton = document.getElementById("nextButton")
 let signupButton = document.getElementById("signupButton")
 let inputNameBox = document.getElementById("inputNameBox")
 let backButton = document.getElementById("backButton")
+let inputContainer = document.getElementById("inputContainer")
 
 usernameBox.classList.remove("hidden")
 inputNameBox.innerText = "Username:"
@@ -23,7 +25,9 @@ let currentInputType = 0
 
 function showInput(inputType) {
     if (inputType === 0) {
+        inputContainer.classList.remove("hidden")
         usernameBox.classList.remove("hidden")
+        signupButton.classList.remove("hidden")
         passwordBox.classList.add("hidden")
         backButton.classList.add("hidden")
         inputNameBox.innerText = "Username:"
@@ -36,18 +40,19 @@ function showInput(inputType) {
                 currentInputType = 0
             })
     } else if (inputType === 1) {
+        inputContainer.classList.remove("hidden")
+        signupButton.classList.add("hidden")
         usernameBox.classList.add("hidden")
         passwordBox.classList.remove("hidden")
         backButton.classList.remove("hidden")
         inputNameBox.innerText = "Password:"
         currentInputType = 1
     } else if (inputType === 2) {
-        usernameBox.classList.add("hidden")
-        passwordBox.classList.add("hidden")
         signupButton.classList.add("hidden")
+        nextButton.classList.add("hidden")
         backButton.classList.add("hidden")
+        inputContainer.classList.add("hidden")
         inputNameBox.classList.add("hidden")
-        inputNameBox.innerText = "Password:"
         currentInputType = 2
     }
 }
@@ -56,7 +61,7 @@ function showElements(yesorno) {
     if (!yesorno) {
         usernameBox.classList.add("hidden")
         passwordBox.classList.add("hidden")
-        signupButton.classList.add("hidden")
+        nextButton.classList.add("hidden")
         backButton.classList.add("hidden")
         inputNameBox.classList.add("hidden")
         showInput(currentInputType)
@@ -64,18 +69,14 @@ function showElements(yesorno) {
     else {
         usernameBox.classList.remove("hidden")
         passwordBox.classList.remove("hidden")
-        signupButton.classList.remove("hidden")
+        nextButton.classList.remove("hidden")
         backButton.classList.remove("hidden")
         inputNameBox.classList.remove("hidden")
         showInput(currentInputType)
     }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById("homeserver").innerText = "Your homeserver is: " + remote + ". "
-});
-
-signupButton.addEventListener("click", () => {
+nextButton.addEventListener("click", async () => {
     if (passwordBox.classList.contains("hidden")) {
         if (usernameBox.value === "") {
             statusBox.innerText = "A username is required!"
@@ -85,65 +86,141 @@ signupButton.addEventListener("click", () => {
         }
         showInput(1)
     } else {
-        async function doStuff() {
-            let username = usernameBox.value
-            let password = passwordBox.value
+        let username = usernameBox.value
+        let password = passwordBox.value
 
-            if (password === "") {
-                statusBox.innerText = "A password is required!"
-                return
-            }
+        if (password === "") {
+            statusBox.innerText = "A password is required!"
+            return
+        }
 
-            showInput(2)
-            showElements(true)
-            statusBox.innerText = "Signing in..."
+        showInput(2)
+        showElements(true)
 
-            async function hashpass(pass) {
-                let key = pass
-                for (let i = 0; i < 128; i++) {
-                    key = await hashwasm.sha3(key)
-                }
-                return key
-            }
+        async function hashpass(pass) {
+            return await hashwasm.argon2id({
+                password: pass,
+                salt: new TextEncoder().encode("I munch Burgers!!"),
+                parallelism: 1,
+                iterations: 32,
+                memorySize: 19264,
+                hashLength: 32,
+                outputType: "hex"
+            })
+        }
 
-            fetch("/api/login", {
+        async function migrateLegacyPassword(secretKey, password) {
+            return await fetch("/api/changepassword", {
                 method: "POST",
                 body: JSON.stringify({
-                    username: username,
-                    password: await hashpass(password),
-                    passwordchange: "no",
-                    newpass: "null"
+                    secretKey: secretKey,
+                    newPassword: password,
+                    migration: true
                 }),
                 headers: {
-                    "Content-Type": "application/json; charset=UTF-8"
+                    "Content-Type": "application/json; charset=UTF-8",
                 }
             })
-                .then((response) => response)
-                .then((response) => {
-                    async function doStuff() {
-                        let responseData = await response.json()
-                        if (response.status === 200) {
-                            localStorage.setItem("DONOTSHARE-secretkey", responseData["key"])
-                            localStorage.setItem("DONOTSHARE-password", await hashwasm.sha512(password))
-
-                            window.location.href = "/app" + window.location.search
-                        }
-                        else if (response.status === 401) {
-                            statusBox.innerText = "Wrong username or password..."
-                            showInput(1)
-                            showElements(true)
-                        } else {
-                            statusBox.innerText = "Something went wrong! (error code: " + response.status + ")"
-                            showInput(1)
-                            showElements(true)
-                        }
-                    }
-                    doStuff()
-                });
         }
-        doStuff()
+
+        async function hashpassold(pass) {
+            let key = pass
+            for (let i = 0; i < 128; i++) {
+                key = await hashwasm.sha3(key)
+            }
+            return key
+        }
+
+        statusBox.innerText = "Hashing password..."
+        let hashedPassword = await hashpass(password)
+
+        let response = await fetch("/api/login", {
+            method: "POST",
+            body: JSON.stringify({
+                username: username,
+                password: hashedPassword,
+                modern: true
+            }),
+            headers: {
+                "Content-Type": "application/json; charset=UTF-8"
+            }
+        })
+        let responseData = await response.json()
+        if (response.status === 200) {
+            statusBox.innerText = "Setting up encryption keys..."
+            localStorage.setItem("DONOTSHARE-secretkey", responseData["key"])
+            localStorage.setItem("DONOTSHARE-password", await hashwasm.argon2id({
+                password: password,
+                salt: new TextEncoder().encode("I love Burgerauth!!"),
+                parallelism: 1,
+                iterations: 32,
+                memorySize: 19264,
+                hashLength: 32,
+                outputType: "hex"
+            }))
+            statusBox.innerText = "Welcome back!"
+            await new Promise(r => setTimeout(r, 200))
+            window.location.href = "/app" + window.location.search
+        } else if (response.status === 401) {
+            if (responseData["migrated"] !== true) {
+                statusBox.innerText = "Migrating to new password algorithm..."
+                let loginOld = await fetch("/api/login", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        username: username,
+                        password: hashpassold(password),
+                        modern: false
+                    }),
+                    headers: {
+                        "Content-Type": "application/json; charset=UTF-8"
+                    }
+                })
+                let loginDataOld = await loginOld.json()
+                if (loginOld.status === 401) {
+                    statusBox.innerText = "Username or password incorrect!"
+                    showInput(1)
+                    showElements(true)
+                } else if (loginOld.status === 200) {
+                    statusBox.innerText = "Setting up encryption keys..."
+                    localStorage.setItem("DONOTSHARE-secretkey", loginDataOld["key"])
+                    localStorage.setItem("DONOTSHARE-password", await hashwasm.argon2id({
+                        password: password,
+                        salt: new TextEncoder().encode("I love Burgerauth!!"),
+                        parallelism: 1,
+                        iterations: 32,
+                        memorySize: 19264,
+                        hashLength: 32,
+                        outputType: "hex"
+                    }))
+
+                    statusBox.innerText = "Migrating password..."
+                    let status = await migrateLegacyPassword(loginDataOld["key"], hashedPass)
+                    if (status.status === 200) {
+                        statusBox.innerText = "Welcome back!"
+                        await new Promise(r => setTimeout(r, 200))
+                        window.location.href = "/app" + window.location.search
+                    } else {
+                        statusBox.innerText = (await status.json())["error"]
+                        showInput(1)
+                        showElements(true)
+                    }
+                }
+            } else {
+                statusBox.innerText = "Wrong username or password..."
+                showInput(1)
+                showElements(true)
+            }
+        } else if (response.status === 500) {
+            statusBox.innerText = responseData["error"]
+            showInput(1)
+            showElements(true)
+        } else {
+            statusBox.innerText = "Something went wrong! (error code: " + responseData["error"] + ")"
+            showInput(1)
+            showElements(true)
+        }
     }
-});
+})
 
 backButton.addEventListener("click", () => {
     showInput(0)
@@ -151,16 +228,13 @@ backButton.addEventListener("click", () => {
 
 showInput(0)
 
-document.getElementById("signuprdirButton").addEventListener("click", function(event) {
-    event.preventDefault();
-
-    const queryString = window.location.search;
-    window.location.href = "/signup" + queryString;
-});
-
 document.getElementById("privacyButton").addEventListener("click", function(event) {
     event.preventDefault();
 
     const queryString = window.location.search;
     window.location.href = "/privacy" + queryString;
 });
+
+function toSignup() {
+    window.location.href = "/signup" + window.location.search;
+}

@@ -3,12 +3,13 @@
 
 <head>
     <title>Signup - {{ .identifier }}</title>
-    <meta charset="UTF-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta charset="UTF-8"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-    <link rel="stylesheet" type="text/css" href="/static/css/style.css" />
-    <script src="/static/js/hash-wasm.js"></script>
     <link rel="icon" href="/static/svg/favicon.svg">
+    <link rel="stylesheet" type="text/css" href="/static/css/style.css"/>
+    <script src="/static/js/hash-wasm.js"></script>
+    <script src="/static/js/wasm_exec.js"></script>
 </head>
 
 <body>
@@ -18,14 +19,20 @@
         <h2 class="w300">Signup</h2>
         <p>Signup to {{ .identifier }}!</p>
         <p id="statusBox"></p>
-        <input id="usernameBox" type="text" placeholder="Username">
-        <input id="passwordBox" type="password" placeholder="Password">
-        <img src="data:image/png;base64,{{ .captcha_image }}" alt="Captcha">
-        <input id="captchaBox" type="text" placeholder="Captcha">
+        <table id="inputContainer">
+            <tr>
+                <td><span id="inputNameBox">Username:</span></td>
+                <td class="inputBox"><input id="usernameBox" type="text" placeholder="Username"></td>
+            </tr>
+            <tr>
+                <td><span id="inputPasswordBox">Password: </span></td>
+                <td class="inputBox"><input id="passwordBox" type="password" placeholder="Password"><br></td>
+            </tr>
+        </table>
         <br>
-        <button id="signupButton">Signup</button><br><br>
-        <p>Already have an account? If so, <a href="/login" id="loginButton">Login</a> instead!</p>
-        <p>Please note that it's impossible to reset your password, do not forget it!</p>
+        <button id="signupButton">Signup</button>
+        <button onclick="toLogin();" id="loginButton" class="unimportant">Login</button>
+        <br><br>
         <a href="{{ .privacy }}" id="privacyButton">Privacy &amp; Terms</a>
     </div>
     <script type="text/javascript" src="../static/js/signup.js"></script>

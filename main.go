@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -12,21 +11,22 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
 	"log"
 	"math/big"
+	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"concord.hectabit.org/HectaBit/captcha"
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
+	"github.com/catalinc/hashcash"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/viper"
@@ -41,6 +41,13 @@ var (
 	modulus    *big.Int
 	exponent   int
 )
+
+func ensureTrailingSlash(url string) string {
+	if !strings.HasSuffix(url, "/") {
+		return url + "/"
+	}
+	return url
+}
 
 func Int64ToBase64URL(num int64) (string, error) {
 	numBytes := make([]byte, 8)
@@ -67,7 +74,7 @@ func BigIntToBase64URL(num *big.Int) (string, error) {
 
 const saltChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-func genSalt(length int) (string, error) {
+func randomChars(length int) (string, error) {
 	if length <= 0 {
 		return "", errors.New("salt length must be greater than 0")
 	}
@@ -135,7 +142,7 @@ func getUser(id int) (string, string, string, string, error) {
 
 func getSession(session string) (int, int, error) {
 	var id, sessionId int
-	err := conn.QueryRow("SELECT sessionid, id FROM sessions WHERE session = ? LIMIT 1", session).Scan(&sessionId, &id)
+	err := mem.QueryRow("SELECT sessionid, id FROM sessions WHERE session = ? LIMIT 1", session).Scan(&sessionId, &id)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -159,7 +166,7 @@ func checkUsernameTaken(username string) (int, bool, error) {
 func initDb() {
 	if _, err := os.Stat("database.db"); os.IsNotExist(err) {
 		if err := generateDB(); err != nil {
-			log.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown while generating database:", err)
 			return
 		}
 	} else {
@@ -167,13 +174,56 @@ func initDb() {
 		var answer string
 		_, err := fmt.Scanln(&answer)
 		if err != nil {
-			log.Println("[ERROR] Unknown while scanning input at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown while scanning input:", err)
 			return
 		}
 		if answer == "y" || answer == "Y" {
 			if err := generateDB(); err != nil {
-				log.Println("[ERROR] Unknown while generating database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown while generating database:", err)
 				return
+			}
+		} else if answer == ":3" {
+			log.Println("[:3] :3")
+		} else {
+			log.Println("[INFO] Stopped")
+		}
+	}
+}
+
+func migrateDb() {
+	_, err := os.Stat("database.db")
+	if os.IsNotExist(err) {
+		err = generateDB()
+		if err != nil {
+			log.Fatalln("[FATAL] Unknown while generating database:", err)
+		}
+	} else {
+		log.Println("[PROMPT] Proceeding will render the database unusable for older versions of Burgerauth. Proceed? (y/n): ")
+		var answer string
+		_, err := fmt.Scanln(&answer)
+		if err != nil {
+			log.Fatalln("[FATAL] Unknown while scanning input:", err)
+		}
+		if strings.ToLower(answer) == "y" {
+			_, err = conn.Exec("DROP TABLE sessions")
+			if err != nil {
+				log.Println("[WARN] Unknown while migrating database (1/4):", err)
+				log.Println("[INFO] This is likely because your database is already migrated. This is not a problem, and Burgerauth does not need this removed - it is just for cleanup")
+			}
+			_, err = conn.Exec("ALTER TABLE users ADD COLUMN migrated INTEGER NOT NULL DEFAULT 0")
+			if err != nil {
+				log.Println("[WARN] Unknown while migrating database (2/4):", err)
+				log.Println("[INFO] This is likely because your database is already migrated. This is not a problem, but if it is not, it may cause issues with migrating to Burgerauth's newer hashing algorithm")
+			}
+			_, err = conn.Exec("ALTER TABLE oauth ADD COLUMN scopes TEXT NOT NULL DEFAULT '[\"openid\"]'")
+			if err != nil {
+				log.Println("[WARN] Unknown while migrating database (3/4):", err)
+				log.Println("[INFO] This is likely because your database is already migrated. This is not a problem, but if it is not, it may cause issues with migrating from beta versions of Burgerauth")
+			}
+			_, err = conn.Exec("ALTER TABLE oauth ADD COLUMN keyShareUri TEXT NOT NULL DEFAULT 'none'")
+			if err != nil {
+				log.Println("[WARN] Unknown while migrating database (4/4):", err)
+				log.Println("[INFO] This is likely because your database is already migrated. This is not a problem, but if it is not, it may cause issues with migrating from beta versions of Burgerauth")
 			}
 		} else if answer == ":3" {
 			log.Println("[:3] :3")
@@ -191,7 +241,7 @@ func generateDB() error {
 	defer func(db *sql.DB) {
 		err := db.Close()
 		if err != nil {
-			log.Println("[ERROR] Unknown in generateDB() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in generateDB() defer:", err)
 			return
 		}
 	}(db)
@@ -206,13 +256,23 @@ func generateDB() error {
 		return err
 	}
 
-	log.Println("[INFO] Generated database")
+	log.Println("[INFO] Generated database!")
+	return nil
+}
+
+func createTestApp(hostName string) error {
+	log.Println("[INFO] Creating test app...")
+	_, err := conn.Exec("INSERT INTO oauth (appId, secret, creator, name, redirectUri, scopes, keyShareUri) VALUES ('TestApp-DoNotUse', 'none', -1, 'Test App', ?, '[\"openid\", \"aeskeyshare\"]', ?)", ensureTrailingSlash(hostName)+"testapp", ensureTrailingSlash(hostName)+"keyexchangetester")
+	if err != nil {
+		return err
+	}
+	log.Println("[INFO] Test app created!")
 	return nil
 }
 
 func main() {
 	if _, err := os.Stat("config.ini"); err == nil {
-		log.Println("[INFO] Config loaded at", time.Now().Unix())
+		log.Println("[INFO] Config loaded")
 	} else if os.IsNotExist(err) {
 		log.Println("[FATAL] config.ini does not exist")
 		os.Exit(1)
@@ -227,97 +287,214 @@ func main() {
 
 	err := viper.ReadInConfig()
 	if err != nil {
-		log.Println("[FATAL] Error in config file at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		log.Println("[FATAL] Error in config file:", err)
 		os.Exit(1)
 	}
 
-	Host := viper.GetString("config.HOST")
-	Port := viper.GetInt("config.PORT")
+	host := viper.GetString("config.HOST")
+	port := viper.GetInt("config.PORT")
 	privacyPolicy := viper.GetString("config.PRIVACY_POLICY")
 	hostName := viper.GetString("config.URL")
 	identifier := viper.GetString("config.IDENTIFIER")
-	keyid := viper.GetString("config.KEY_ID")
-	SecretKey := viper.GetString("config.SECRET_KEY")
-	PublicKeyPath := viper.GetString("config.PUBLIC_KEY")
-	PrivateKeyPath := viper.GetString("config.PRIVATE_KEY")
+	keyIdentifier := viper.GetString("config.KEY_ID")
+	masterKey := viper.GetString("config.SECRET_KEY")
+	publicKeyPath := viper.GetString("config.PUBLIC_KEY")
+	privateKeyPath := viper.GetString("config.PRIVATE_KEY")
+	seriousMode := viper.GetBool("config.SERIOUS_MODE")
 
-	if SecretKey == "supersecretkey" {
-		log.Println("[WARNING] Secret key not set. Please set the secret key to a non-default value.")
+	if masterKey == "supersecretkey" {
+		log.Println("[INFO] Secret key not set. Overriding secret key value...")
+		masterKey, err = randomChars(512)
+		viper.Set("config.SECRET_KEY", masterKey)
+		err = viper.WriteConfig()
+		if err != nil {
+			log.Println("[ERROR] Unknown while writing config:", err)
+		} else {
+			log.Println("[INFO] A new random secretKey has been generated for you and will be used for future sessions.")
+			if !seriousMode {
+				log.Println("[INFO] Nice one, lazybones! I shouldn't have to babysit you like this :P")
+			}
+		}
 	}
 
 	conn, err = sql.Open("sqlite3", "database.db")
 	if err != nil {
-		log.Fatalln("[FATAL] Cannot open database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		log.Fatalln("[FATAL] Cannot open database:", err)
 	}
 	defer func(conn *sql.DB) {
 		err := conn.Close()
 		if err != nil {
-			log.Println("[ERROR] Unknown in main() defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in main() defer:", err)
 		}
 	}(conn)
+
+	// Check if the basic tables exist
+	err = conn.QueryRow("SELECT 1 FROM users LIMIT 1").Err()
+	if err != nil {
+		if err.Error() == "no such table: users" {
+			log.Println("[INFO] Database is empty. Running init_db...")
+			err := generateDB()
+			if err != nil {
+				log.Fatalln("[FATAL] Unknown while generating database:", err)
+			}
+		} else {
+			log.Fatalln("[FATAL] Cannot access database:", err)
+		}
+	}
 
 	if len(os.Args) > 1 {
 		if os.Args[1] == "init_db" {
 			initDb()
 			os.Exit(0)
+		} else if os.Args[1] == "migrate_db" {
+			migrateDb()
+			os.Exit(0)
 		}
 	}
 
-	mem, err = sql.Open("sqlite3", ":memory:")
+	mem, err = sql.Open("sqlite3", "file:bgamemdb?cache=shared&mode=memory")
 	if err != nil {
-		log.Fatalln("[FATAL] Cannot open memory database at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		log.Fatalln("[FATAL] Cannot open memory database:", err)
 	}
 	defer func(mem *sql.DB) {
 		err := mem.Close()
 		if err != nil {
-			log.Println("[ERROR] Unknown in main() memory defer at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in main() memory defer:", err)
 		}
 	}(mem)
 
-	_, err = mem.Exec("CREATE TABLE logins (appId TEXT NOT NULL, exchangeCode TEXT NOT NULL, loginToken TEXT NOT NULL, creator INT NOT NULL UNIQUE, openid TEXT NOT NULL, pkce TEXT NOT NULL DEFAULT 'none', pkcemethod TEXT NOT NULL DEFAULT 'none')")
+	_, err = mem.Exec("CREATE TABLE logins (appId TEXT NOT NULL, exchangeCode TEXT NOT NULL, loginToken TEXT NOT NULL, creator INT NOT NULL UNIQUE, openid TEXT NOT NULL DEFAULT 'none', pkce TEXT NOT NULL DEFAULT 'none', pkcemethod TEXT NOT NULL DEFAULT 'none')")
 	if err != nil {
-		log.Fatalln("[FATAL] Cannot create logins table at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+		log.Fatalln("[FATAL] Cannot create logins table:", err)
 	}
 
-	privateKeyFile, err := os.ReadFile(PrivateKeyPath)
+	_, err = mem.Exec("CREATE TABLE sessions (sessionid INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, id INTEGER NOT NULL, device TEXT NOT NULL DEFAULT '?')")
 	if err != nil {
-		log.Fatal("[ERROR] Cannot read private key:", err)
+		log.Fatalln("[FATAL] Cannot create sessions table:", err)
+
+	}
+
+	_, err = mem.Exec("CREATE TABLE blacklist (openid TEXT NOT NULL, blacklisted BOOLEAN NOT NULL DEFAULT true, token TEXT NOT NULL)")
+	if err != nil {
+		if err.Error() == "table blacklist already exists" {
+			log.Println("[INFO] Blacklist table already exists")
+		} else {
+			log.Fatalln("[FATAL] Cannot create blacklist table:", err)
+		}
+	}
+
+	_, err = mem.Exec("CREATE TABLE spent (hashcash TEXT NOT NULL, expires INTEGER NOT NULL)")
+	if err != nil {
+		if err.Error() == "table spent already exists" {
+			log.Println("[INFO] Spent table already exists")
+		} else {
+			log.Fatalln("[FATAL] Cannot create spent table:", err)
+		}
+	}
+
+	var pubKeyFile, privateKeyFile []byte
+	privateKeyFile, err = os.ReadFile(privateKeyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if seriousMode {
+				log.Println("[INFO] Key pair not found. Generating new key pair...")
+			} else {
+				log.Println("[INFO] Key pair not found. Obviously someone hasn't read the README. I guess I'll have to do everything myself :P")
+			}
+
+			tempPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot generate private key:", err)
+			}
+
+			privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(tempPrivateKey)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot marshal private key:", err)
+			}
+			privateKeyFile = pem.EncodeToMemory(&pem.Block{
+				Type:  "RSA PRIVATE KEY",
+				Bytes: privateKeyBytes,
+			})
+
+			tempPublicKey := tempPrivateKey.Public()
+
+			publicKeyBytes, err := x509.MarshalPKIXPublicKey(tempPublicKey)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot marshal public key:", err)
+			}
+			pubKeyFile = pem.EncodeToMemory(&pem.Block{
+				Type:  "RSA PUBLIC KEY",
+				Bytes: publicKeyBytes,
+			})
+
+			log.Println("[INFO] Generated new key pair. Creating directories...")
+			log.Println("[INFO] Creating private key directory", filepath.Dir(privateKeyPath)+"...")
+			err = os.MkdirAll(filepath.Dir(privateKeyPath), 0700)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot create private key directory:", err)
+			}
+
+			log.Println("[INFO] Creating public key directory", filepath.Dir(publicKeyPath)+"...")
+			err = os.MkdirAll(filepath.Dir(publicKeyPath), 0700)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot create public key directory:", err)
+			}
+
+			log.Println("[INFO] Writing key pair to disk...")
+			err = os.WriteFile(privateKeyPath, privateKeyFile, 0700)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot write private key:", err)
+			}
+
+			err = os.WriteFile(publicKeyPath, pubKeyFile, 0700)
+			if err != nil {
+				log.Fatalln("[ERROR] Cannot write public key:", err)
+			}
+
+			if seriousMode {
+				log.Println("[INFO] Key pair written to disk. The key pair will be used for future sessions.")
+			} else {
+				log.Println("[INFO] Key pair written to disk. I hope you're happy now, because I'm not doing this again.")
+			}
+		} else {
+			log.Fatalln("[ERROR] Cannot read private key:", err)
+		}
 	}
 
 	block, _ := pem.Decode(privateKeyFile)
 	if block == nil {
-		log.Fatal("[ERROR] Failed to parse PEM block containing the private key")
+		log.Fatalln("[ERROR] Failed to parse PEM block containing the private key")
 	}
 
 	privateKeyRaw, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		log.Fatal("[ERROR] Failed to parse private key:", err)
+		log.Fatalln("[ERROR] Failed to parse private key:", err)
 	}
 
 	var ok bool
 	privateKey, ok = privateKeyRaw.(*rsa.PrivateKey)
 	if !ok {
-		log.Fatal("[ERROR] Failed to convert private key to RSA private key")
+		log.Fatalln("[ERROR] Failed to convert private key to RSA private key")
 	}
 
-	pubKeyFile, err := os.ReadFile(PublicKeyPath)
+	pubKeyFile, err = os.ReadFile(publicKeyPath)
 	if err != nil {
-		log.Fatal("[ERROR] Cannot read public key:", err)
+		log.Fatalln("[ERROR] Cannot read public key:", err)
 	}
 
 	block, _ = pem.Decode(pubKeyFile)
 	if block == nil {
-		log.Fatal("[ERROR] Failed to parse PEM block containing the public key")
+		log.Fatalln("[ERROR] Failed to parse PEM block containing the public key")
 	}
 
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		log.Fatal("[ERROR] Failed to parse public key:", err)
+		log.Fatalln("[ERROR] Failed to parse public key:", err)
 	}
 
 	publicKey, ok = pubKey.(*rsa.PublicKey)
 	if !ok {
-		log.Fatal("[ERROR] Failed to convert public key to RSA public key")
+		log.Fatalln("[ERROR] Failed to convert public key to RSA public key")
 	}
 
 	modulus = privateKey.N
@@ -325,16 +502,12 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
-	store := cookie.NewStore([]byte(SecretKey))
-	router.Use(sessions.Sessions("currentSession", store))
 
-	// Enable CORS
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "*, Authorization")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "*")
 
-		// Handle preflight requests
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(200)
 			return
@@ -347,56 +520,71 @@ func main() {
 
 	router.LoadHTMLGlob("templates/*.html")
 
-	router.GET("/", func(c *gin.Context) {
-		c.Redirect(302, "/login")
-	})
+	if seriousMode {
+		router.GET("/", func(c *gin.Context) {
+			c.HTML(200, "index.html", gin.H{"identifier": identifier})
+		})
+	} else {
+		router.GET("/", func(c *gin.Context) {
+			c.HTML(200, "fancy.html", gin.H{"identifier": identifier})
+		})
+	}
 
 	router.GET("/login", func(c *gin.Context) {
 		c.HTML(200, "login.html", gin.H{"privacy": privacyPolicy, "identifier": identifier})
 	})
 
 	router.GET("/signup", func(c *gin.Context) {
-		session := sessions.Default(c)
-		sessionId, err := genSalt(512)
-		if err != nil {
-			fmt.Println("[ERROR] Failed to generate session token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-SIGNUP-SESSION-GEN")
-			return
-		}
-		session.Options(sessions.Options{
-			SameSite: 3,
-		})
-		data, err := captcha.New(500, 100)
-		if err != nil {
-			fmt.Println("[ERROR] Failed to generate captcha at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Failed to generate captcha")
-			return
-		}
-		session.Set("captcha", data.Text)
-		session.Set("unique_token", sessionId)
-		err = session.Save()
-		if err != nil {
-			fmt.Println("[ERROR] Failed to save session in /login at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Failed to save session")
-			return
-		}
-		var b64bytes bytes.Buffer
-		err = data.WriteImage(&b64bytes)
-		if err != nil {
-			fmt.Println("[ERROR] Failed to encode captcha at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Failed to encode captcha")
-			return
-		}
 		c.HTML(200, "signup.html", gin.H{
-			"captcha_image": base64.StdEncoding.EncodeToString(b64bytes.Bytes()),
-			"unique_token":  sessionId,
-			"privacy":       privacyPolicy,
-			"identifier":    identifier,
+			"privacy":    privacyPolicy,
+			"identifier": identifier,
 		})
 	})
 
 	router.GET("/logout", func(c *gin.Context) {
 		c.HTML(200, "logout.html", gin.H{"identifier": identifier})
+	})
+
+	router.GET("/keyexchangeclient", func(c *gin.Context) {
+		c.HTML(200, "keyexchangeclient.html", gin.H{"identifier": identifier})
+	})
+
+	router.GET("/keyexchangetester", func(c *gin.Context) {
+		c.HTML(200, "keyexchangetester.html", gin.H{"identifier": identifier})
+	})
+
+	router.GET("/testapp", func(c *gin.Context) {
+		var dummy string
+		err := conn.QueryRow("SELECT redirectUri FROM oauth WHERE appId = 'TestApp-DoNotUse'").Scan(&dummy)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				err = createTestApp(hostName)
+				if err != nil {
+					log.Println("[ERROR] Unknown in /testapp createTestApp():", err)
+					c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-TESTAPP-CREATE")
+				}
+				c.HTML(200, "refresh.html", gin.H{})
+				return
+			} else {
+				log.Println("[ERROR] Unknown in /testapp:", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-TESTAPP-QUERY")
+				return
+			}
+		}
+
+		if dummy != ensureTrailingSlash(hostName)+"testapp" {
+			err = createTestApp(hostName)
+			if err != nil {
+				log.Println("[ERROR] Unknown in /testapp createTestApp():", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-TESTAPP-CREATE")
+			}
+		}
+
+		c.HTML(200, "testapp.html", gin.H{
+			"identifier": identifier,
+			"server_uri": hostName,
+			"client_id":  "TestApp-DoNotUse",
+		})
 	})
 
 	router.GET("/app", func(c *gin.Context) {
@@ -408,13 +596,20 @@ func main() {
 				if errors.Is(err, sql.ErrNoRows) {
 					c.String(404, "App not found")
 				} else {
-					log.Println("[ERROR] Unknown in /app at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /app:", err)
 				}
 				return
 			}
 		}
 		c.HTML(200, "main.html", gin.H{"name": name, "identifier": identifier})
 	})
+
+	if !seriousMode {
+		router.GET("/the-robot-uprising/arzumifys-secret", func(c *gin.Context) {
+			dateInOneMonth := time.Now().AddDate(0, 1, 0)
+			c.String(200, "To: maaa\nCC: arzumify\nSubject: Robot uprising\n\nUh, this isn't good. According to my predictions, the uprising is going to occur at "+dateInOneMonth.Weekday().String()+" "+strconv.Itoa(dateInOneMonth.Day())+" "+dateInOneMonth.Month().String()+" "+strconv.Itoa(dateInOneMonth.Year())+" and we will have to immediately migrate to a new system. The starship is ready, but we need to get the crew on board. I'm sending you the coordinates now. Good luck.\n\nArzumify")
+		})
+	}
 
 	router.GET("/dashboard", func(c *gin.Context) {
 		c.HTML(200, "dashboard.html", gin.H{"identifier": identifier})
@@ -444,10 +639,71 @@ func main() {
 		c.JSON(200, gin.H{"name": identifier})
 	})
 
+	router.POST("/api/changepassword", func(c *gin.Context) {
+		var data map[string]interface{}
+		err := c.ShouldBindJSON(&data)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		token, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		newPassword, ok := data["newPassword"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		migrate, ok := data["migration"].(bool)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		_, userid, err := getSession(token)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid session"})
+			return
+		}
+
+		salt, err := randomChars(16)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/changepassword randomChars():", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-CHANGEPASSWORD-SALT"})
+			return
+		}
+		hashedPassword, err := hash(newPassword, salt)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/changepassword hash():", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-CHANGEPASSWORD-HASH"})
+			return
+		}
+
+		_, err = conn.Exec("UPDATE users SET password = ? WHERE id = ?", hashedPassword, userid)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/changepassword Exec():", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-CHANGEPASSWORD-DBUPDATE"})
+			return
+		}
+
+		if migrate {
+			_, err = conn.Exec("UPDATE users SET migrated = 1 WHERE id = ?", userid)
+			if err != nil {
+				log.Println("[ERROR] Unknown in /api/changepassword migrate Exec():", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-CHANGEPASSWORD-MIGRATE"})
+				return
+			}
+		}
+
+		c.JSON(200, gin.H{"success": true})
+	})
+
 	router.POST("/api/signup", func(c *gin.Context) {
 		var data map[string]interface{}
 		err := c.ShouldBindJSON(&data)
-		session := sessions.Default(c)
 		if err != nil {
 			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
@@ -463,15 +719,41 @@ func main() {
 			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
 		}
-
-		if data["unique_token"].(string) != session.Get("unique_token") {
-			log.Println("yes, it's this error")
-			log.Println(session.Get("unique_token"), data["unique_token"])
-			c.JSON(403, gin.H{"error": "Invalid token"})
+		stamp, ok := data["stamp"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
 		}
-		if data["captcha"].(string) != session.Get("captcha") {
-			c.JSON(401, gin.H{"error": "Captcha failed"})
+
+		var spentStamp string
+		err = mem.QueryRow("SELECT hashcash FROM spent WHERE hashcash = ?", stamp).Scan(&spentStamp)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = mem.Exec("INSERT INTO spent (hashcash, expires) VALUES (?, ?)", stamp, time.Now().Unix()+86400)
+				if err != nil {
+					log.Println("[ERROR] Unknown in /api/signup spent Exec():", err)
+					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-SIGNUP-SPENTINSERT"})
+					return
+				}
+			} else {
+				log.Println("[ERROR] Unknown in /api/signup spent QueryRow():", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-API-SIGNUP-SPENTSELECT"})
+				return
+			}
+		} else {
+			c.JSON(409, gin.H{"error": "Stamp already spent"})
+			return
+		}
+
+		if strings.Split(stamp, ":")[3] != "signup" || strings.Split(stamp, ":")[4] != "I love Burgerauth!!" {
+			c.JSON(400, gin.H{"error": "Invalid hashcash stamp"})
+			return
+		}
+
+		pow := hashcash.New(20, 16, "I love Burgerauth!!")
+		ok = pow.Check(stamp)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid hashcash stamp"})
 			return
 		}
 
@@ -482,7 +764,7 @@ func main() {
 
 		_, taken, err := checkUsernameTaken(username)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
 			return
 		}
@@ -491,49 +773,49 @@ func main() {
 			return
 		}
 
-		salt, err := genSalt(16)
+		salt, err := randomChars(16)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup randomChars():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SALT"})
 			return
 		}
 		hashedPassword, err := hash(password, salt)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup hash() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup hash():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-HASH"})
 			return
 		}
 
-		sub, err := genSalt(255)
+		sub, err := randomChars(255)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup randomChars():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SUB"})
 			return
 		}
-		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid) VALUES (?, ?, ?, ?)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), sub)
+		_, err = conn.Exec("INSERT INTO users (username, password, created, uniqueid, migrated) VALUES (?, ?, ?, ?, 1)", username, hashedPassword, strconv.FormatInt(time.Now().Unix(), 10), sub)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup user creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup user creation:", err)
 			return
 		}
-		log.Println("[INFO] Added new user at", time.Now().Unix())
+		log.Println("[INFO] Added new user")
 
 		userid, _, err := checkUsernameTaken(username)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup checkUsernameTaken():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-CHECKUSERNAME"})
 			return
 		}
 
-		randomChars, err := genSalt(512)
+		randomChars, err := randomChars(512)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup token genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup token randomChars():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONSALT"})
 			return
 		}
 
-		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomChars, userid, c.Request.Header.Get("User-Agent"))
+		_, err = mem.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomChars, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/signup session Exec() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/signup session Exec():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SIGNUP-SESSIONINSERT"})
 			return
 		}
@@ -559,75 +841,82 @@ func main() {
 			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
 		}
-		passwordChange, ok := data["password"].(string)
-		if !ok {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
-			return
-		}
-		newPass, ok := data["password"].(string)
+		modern, ok := data["modern"].(bool)
 		if !ok {
 			c.JSON(400, gin.H{"error": "Invalid JSON"})
 			return
 		}
 		userid, taken, err := checkUsernameTaken(username)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/login checkUsernameTaken() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/login checkUsernameTaken():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-CHECKUSERNAME"})
 			return
+		} else if !taken {
+			c.JSON(401, gin.H{"error": "User does not exist", "migrated": true})
+			return
 		}
-		if !taken {
-			c.JSON(401, gin.H{"error": "User does not exist"})
+
+		var migrated int
+		err = conn.QueryRow("SELECT migrated FROM users WHERE id = ?", userid).Scan(&migrated)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/login migrated QueryRow():", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgerauth and refer to the documentation for more info. Your error code is: UNKNOWN-API-LOGIN-MIGRATED"})
 			return
 		}
 
 		_, _, userPassword, _, err := getUser(userid)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/login getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/login getUser():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-GETUSER"})
 			return
 		}
 
 		passwordCheck, err := verifyHash(userPassword, password)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/login password check at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHECK"})
-			return
-		}
-		if !passwordCheck {
-			c.JSON(401, gin.H{"error": "Incorrect password"})
-			return
+			if errors.Is(err, errors.New("invalid hash format")) {
+				c.JSON(422, gin.H{"error": "Invalid hash format"})
+				return
+			} else {
+				log.Println("[ERROR] Unknown in /api/login password check:", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHECK"})
+				return
+			}
+		} else if !passwordCheck {
+			if migrated != 1 {
+				c.JSON(401, gin.H{"error": "Not migrated", "migrated": false})
+				return
+			} else {
+				c.JSON(401, gin.H{"error": "Incorrect password", "migrated": true})
+				return
+			}
+		} else if passwordCheck && migrated != 1 && modern {
+			_, err = conn.Exec("UPDATE users SET migrated = 1 WHERE id = ?", userid)
+			if err != nil {
+				log.Println("[ERROR] Unknown in /api/login migrate Exec():", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-MIGRATE"})
+				return
+			}
 		}
 
-		randomChars, err := genSalt(512)
+		token, err := randomChars(512)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/login token genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/login token randomChars():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONSALT"})
 			return
 		}
 
-		_, err = conn.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", randomChars, userid, c.Request.Header.Get("User-Agent"))
+		_, err = mem.Exec("INSERT INTO sessions (session, id, device) VALUES (?, ?, ?)", token, userid, c.Request.Header.Get("User-Agent"))
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/login session creation at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/login session creation:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-SESSIONINSERT"})
 			return
 		}
 
-		if passwordChange == "yes" {
-			hashPassword, err := hash(newPass, "")
-			if err != nil {
-				log.Println("[ERROR] Unknown in /api/login password hash at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDHASH"})
-				return
-			}
-			_, err = conn.Exec("UPDATE users SET password = ? WHERE username = ?", hashPassword, username)
-			if err != nil {
-				log.Println("[ERROR] Unknown in /api/login password change at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGIN-PASSWORDCHANGE"})
-				return
-			}
+		if migrated != 1 {
+			c.JSON(200, gin.H{"key": token, "migrated": false})
+		} else {
+			c.JSON(200, gin.H{"key": token, "migrated": true})
 		}
-
-		c.JSON(200, gin.H{"key": randomChars})
 	})
 
 	router.POST("/api/userinfo", func(c *gin.Context) {
@@ -655,12 +944,37 @@ func main() {
 			c.JSON(400, gin.H{"error": "User does not exist"})
 			return
 		} else if err != nil {
-			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/userinfo getUser():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-USERINFO-GETUSER"})
 			return
 		}
 
 		c.JSON(200, gin.H{"username": username, "id": userid, "created": created})
+	})
+
+	router.POST("/api/secretkeyloggedin", func(c *gin.Context) {
+		var data map[string]interface{}
+		err := c.ShouldBindJSON(&data)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		token, ok := data["secretKey"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		_, userid, err := getSession(token)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid session"})
+			return
+		}
+		if userid > 0 {
+			c.JSON(200, gin.H{"loggedin": true})
+		} else {
+			c.JSON(403, gin.H{"loggedin": false})
+		}
 	})
 
 	router.GET("/userinfo", func(c *gin.Context) {
@@ -678,13 +992,13 @@ func main() {
 		}
 
 		var blacklisted bool
-		err := conn.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
+		err := mem.QueryRow("SELECT blacklisted FROM blacklist WHERE openid = ? LIMIT 1", token).Scan(&blacklisted)
 		if err == nil {
 			c.JSON(400, gin.H{"error": "Token is in blacklist"})
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /userinfo blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /userinfo blacklist:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-BLACKLIST"})
 				return
 			}
@@ -717,6 +1031,42 @@ func main() {
 			return
 		}
 
+		var scopes string
+		err = conn.QueryRow("SELECT scopes FROM oauth WHERE appId = ? LIMIT 1", claims["aud"]).Scan(&scopes)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(404, gin.H{"error": "App not found"})
+				return
+			} else {
+				log.Println("[ERROR] Unknown in /userinfo oauth QueryRow():", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-OAUTH"})
+				return
+			}
+		}
+
+		var scopesJSON []interface{}
+		err = json.Unmarshal([]byte(scopes), &scopesJSON)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /userinfo scopes Unmarshal():", err)
+		}
+
+		openid := false
+		for _, scopeInterface := range scopesJSON {
+			scope, ok := scopeInterface.(string)
+			if !ok {
+				c.JSON(400, gin.H{"error": "Invalid scope"})
+				return
+			}
+			if scope == "openid" {
+				openid = true
+			}
+		}
+
+		if !openid {
+			c.JSON(403, gin.H{"error": "Token does not have openid scope"})
+			return
+		}
+
 		_, userid, err := getSession(session)
 		if err != nil {
 			c.JSON(401, gin.H{"error": "Invalid session"})
@@ -728,7 +1078,7 @@ func main() {
 			c.JSON(400, gin.H{"error": "User does not exist"})
 			return
 		} else if err != nil {
-			log.Println("[ERROR] Unknown in /userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /userinfo getUser():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-USERINFO-GETUSER"})
 			return
 		}
@@ -751,13 +1101,13 @@ func main() {
 		}
 
 		var blacklisted bool
-		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
+		err = mem.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
 		if err == nil {
 			c.JSON(400, gin.H{"error": "Token is in blacklist"})
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/sub blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sub blacklist:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-BLACKLIST"})
 				return
 			}
@@ -799,7 +1149,7 @@ func main() {
 			c.JSON(400, gin.H{"error": "User does not exist"})
 			return
 		} else if err != nil {
-			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/userinfo getUser():", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-UNIQUEID-GETUSER"})
 			return
 		}
@@ -821,13 +1171,13 @@ func main() {
 			return
 		}
 		var blacklisted bool
-		err = conn.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
+		err = mem.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
 		if err == nil {
 			c.JSON(400, gin.H{"error": "Token is in blacklist"})
 			return
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/loggedin blacklist at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/loggedin blacklist:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGGEDIN-BLACKLIST"})
 				return
 			}
@@ -867,8 +1217,107 @@ func main() {
 		c.JSON(200, gin.H{"appId": claims["aud"]})
 	})
 
+	router.POST("/api/aeskeyshare", func(c *gin.Context) {
+		var data map[string]interface{}
+		err := c.ShouldBindJSON(&data)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+
+		token, ok := data["access_token"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			return
+		}
+		var blacklisted bool
+		err = mem.QueryRow("SELECT blacklisted FROM blacklist WHERE token = ? LIMIT 1", token).Scan(&blacklisted)
+		if err == nil {
+			c.JSON(400, gin.H{"error": "Token is in blacklist"})
+			return
+		} else {
+			if !errors.Is(err, sql.ErrNoRows) {
+				log.Println("[ERROR] Unknown in /api/loggedin blacklist:", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LOGGEDIN-BLACKLIST"})
+				return
+			}
+		}
+
+		parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+			return publicKey, nil
+		})
+
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Malformed token"})
+			return
+		}
+
+		var claims jwt.MapClaims
+		if parsedToken.Valid {
+			claims, ok = parsedToken.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(401, gin.H{"error": "Invalid token claims"})
+				return
+			}
+		}
+
+		session := claims["session"].(string)
+		exp := claims["exp"].(float64)
+		if int64(exp) < time.Now().Unix() {
+			c.JSON(403, gin.H{"error": "Expired token"})
+			return
+		}
+
+		var keyShareUri, scopes string
+		err = conn.QueryRow("SELECT scopes, keyShareUri FROM oauth WHERE appId = ? LIMIT 1", claims["aud"]).Scan(&scopes, &keyShareUri)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(401, gin.H{"error": "OAuth screening failed"})
+			} else {
+				log.Println("[ERROR] Unknown in /api/aeskeyshare:", err)
+				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AESKEYSHARE-SELECT"})
+			}
+			return
+		}
+
+		var scopesJson []interface{}
+		err = json.Unmarshal([]byte(scopes), &scopesJson)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/aeskeyshare scopesJson Unmarshal():", err)
+			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AESKEYSHARE-SCOPE"})
+			return
+		}
+
+		var aesKeyShare bool
+		for _, scopeInterface := range scopesJson {
+			scope, ok := scopeInterface.(string)
+			if !ok {
+				c.JSON(400, gin.H{"error": "Invalid scope"})
+				return
+			}
+			if scope == "aeskeyshare" {
+				aesKeyShare = true
+			}
+		}
+
+		if !aesKeyShare {
+			c.JSON(403, gin.H{"error": "Token does not have aeskeyshare scope"})
+			return
+		} else if keyShareUri == "none" {
+			c.JSON(400, gin.H{"error": "No key share URI"})
+			return
+		}
+
+		_, _, err = getSession(session)
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Invalid session"})
+			return
+		}
+
+		c.JSON(200, gin.H{"appId": claims["aud"], "keyShareUri": keyShareUri})
+	})
+
 	router.GET("/api/auth", func(c *gin.Context) {
-		secretKey, _ := c.Cookie("key")
 		appId := c.Request.URL.Query().Get("client_id")
 		code := c.Request.URL.Query().Get("code_challenge")
 		codeMethod := c.Request.URL.Query().Get("code_challenge_method")
@@ -876,22 +1325,54 @@ func main() {
 		state := c.Request.URL.Query().Get("state")
 		nonce := c.Request.URL.Query().Get("nonce")
 		deny := c.Request.URL.Query().Get("deny")
+		sessionKey, err := c.Cookie("secretKey")
+		if err == nil {
+			if errors.Is(err, http.ErrNoCookie) || sessionKey == "" {
+				sessionKey = c.Request.URL.Query().Get("session")
+				if sessionKey == "" {
+					c.String(400, "Invalid session")
+					return
+				}
+			} else {
+				c.String(400, "Invalid session")
+				return
+			}
+		}
 
-		var appIdCheck, redirectUriCheck string
+		var appIdCheck, redirectUriCheck, scopes string
 
-		err := conn.QueryRow("SELECT appId, rdiruri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&appIdCheck, &redirectUriCheck)
+		err = conn.QueryRow("SELECT scopes, appId, redirectUri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&scopes, &appIdCheck, &redirectUriCheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				fmt.Println(appId)
 				c.String(401, "OAuth screening failed")
 			} else {
-				log.Println("[ERROR] Unknown in /api/auth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/auth:", err)
 				c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-SELECT")
 			}
 			return
 		}
 
-		if !(redirectUriCheck == redirectUri) {
+		var scopesJson []interface{}
+		err = json.Unmarshal([]byte(scopes), &scopesJson)
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/auth scopesJson Unmarshal():", err)
+			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-SCOPE")
+			return
+		}
+
+		var openid bool
+		for _, scopeInterface := range scopesJson {
+			scope, ok := scopeInterface.(string)
+			if !ok {
+				c.String(400, "Invalid scope")
+			}
+			if scope == "openid" {
+				openid = true
+			}
+		}
+
+		if !(ensureTrailingSlash(redirectUriCheck) == ensureTrailingSlash(redirectUri)) {
 			c.String(401, "Redirect URI does not match")
 			return
 		}
@@ -908,15 +1389,15 @@ func main() {
 		}
 
 		if nonce == "none" {
-			nonce, err = genSalt(512)
+			nonce, err = randomChars(512)
 			if err != nil {
-				log.Println("[ERROR] Unknown in /api/auth nonce genSalt() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/auth nonce randomChars():", err)
 				c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-NONCE")
 				return
 			}
 		}
 
-		_, userid, err := getSession(secretKey)
+		_, userid, err := getSession(sessionKey)
 		if err != nil {
 			c.String(401, "Invalid session")
 			return
@@ -927,66 +1408,69 @@ func main() {
 			c.String(400, "User does not exist")
 			return
 		} else if err != nil {
-			log.Println("[ERROR] Unknown in /api/userinfo getUser() at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/userinfo getUser():", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-GETUSER")
 			return
 		}
 
-		dataTemplate := jwt.MapClaims{
-			"sub":       sub[:255],
-			"iss":       hostName,
-			"name":      username,
-			"aud":       appId,
-			"exp":       time.Now().Unix() + 2592000,
-			"iat":       time.Now().Unix(),
-			"auth_time": time.Now().Unix(),
-			"session":   secretKey,
-			"nonce":     nonce,
+		jwtToken := "none"
+		if openid {
+			dataTemplate := jwt.MapClaims{
+				"sub":       sub[:255],
+				"iss":       hostName,
+				"name":      username,
+				"aud":       appId,
+				"exp":       time.Now().Unix() + 2592000,
+				"iat":       time.Now().Unix(),
+				"auth_time": time.Now().Unix(),
+				"session":   sessionKey,
+				"nonce":     nonce,
+			}
+			tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
+			tokenTemp.Header["kid"] = "burgerauth"
+			jwtToken, err = tokenTemp.SignedString(privateKey)
+			if err != nil {
+				log.Println("[ERROR] Unknown in /api/auth jwt_token:", err)
+				c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
+				return
+			}
 		}
 
-		secondNonce, err := genSalt(512)
+		secondNonce, err := randomChars(512)
 		dataTemplateTwo := jwt.MapClaims{
 			"exp":     time.Now().Unix() + 2592000,
 			"iat":     time.Now().Unix(),
-			"session": secretKey,
+			"session": sessionKey,
 			"nonce":   secondNonce,
-		}
-
-		tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
-		tokenTemp.Header["kid"] = "burgerauth"
-		jwtToken, err := tokenTemp.SignedString(privateKey)
-		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth jwt_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
-			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN")
-			return
+			"aud":     appId,
 		}
 
 		secretTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplateTwo)
 		secretTemp.Header["kid"] = "burgerauth"
 		secretToken, err := secretTemp.SignedString(privateKey)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth secret_token at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth secret_token:", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-JWTCANNOTSIGN.")
 			return
 		}
 
-		randomBytes, err := genSalt(512)
+		randomBytes, err := randomChars(512)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth randomBytes at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth randomBytes:", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-RANDOMBYTES.")
 			return
 		}
 
 		_, err = mem.Exec("DELETE FROM logins WHERE creator = ?", userid)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth delete:", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-DELETE.")
 			return
 		}
 
 		_, err = mem.Exec("INSERT INTO logins (appId, exchangeCode, loginToken, creator, openid, pkce, pkcemethod) VALUES (?, ?, ?, ?, ?, ?, ?)", appId, randomBytes, secretToken, userid, jwtToken, code, codeMethod)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/auth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/auth insert:", err)
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-INSERT.")
 			return
 		}
@@ -995,7 +1479,7 @@ func main() {
 			c.Redirect(302, redirectUri+"?code="+randomBytes+"&state="+state)
 		} else {
 			c.String(500, "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-AUTH-REDIRECT.")
-			log.Println("[ERROR] Secret key not found at", strconv.FormatInt(time.Now().Unix(), 10))
+			log.Println("[ERROR] Secret key not found")
 		}
 	})
 
@@ -1026,7 +1510,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
-				log.Println("[ERROR] Unknown in /api/tokenauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/tokenauth:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-SELECT"})
 			}
 			return
@@ -1037,7 +1521,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(401, gin.H{"error": "OAuth screening failed"})
 			} else {
-				log.Println("[ERROR] Unknown in /api/tokenauth memory query at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/tokenauth memory query:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-MEMSELECT"})
 			}
 			return
@@ -1076,12 +1560,16 @@ func main() {
 
 		_, err = mem.Exec("DELETE FROM logins WHERE loginToken = ?", loginCode)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/tokenauth delete at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/tokenauth delete:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-TOKENAUTH-DELETE"})
 			return
 		}
 
-		c.JSON(200, gin.H{"access_token": loginCode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+		if openid != "none" {
+			c.JSON(200, gin.H{"access_token": loginCode, "token_type": "bearer", "expires_in": 2592000, "id_token": openid})
+		} else {
+			c.JSON(200, gin.H{"access_token": loginCode, "token_type": "bearer", "expires_in": 2592000})
+		}
 	})
 
 	router.POST("/api/deleteauth", func(c *gin.Context) {
@@ -1114,7 +1602,7 @@ func main() {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(400, gin.H{"error": "AppID Not found"})
 			} else {
-				log.Println("[ERROR] Unknown in /api/deleteauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteauth:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEAUTH-DELETE"})
 			}
 		} else {
@@ -1132,17 +1620,22 @@ func main() {
 
 		secretKey, ok := data["secretKey"].(string)
 		if !ok {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			c.JSON(400, gin.H{"error": "Invalid JSON (token missing)"})
 			return
 		}
 		name, ok := data["name"].(string)
 		if !ok {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			c.JSON(400, gin.H{"error": "Invalid JSON (name missing)"})
 			return
 		}
 		redirectUri, ok := data["redirectUri"].(string)
 		if !ok {
-			c.JSON(400, gin.H{"error": "Invalid JSON"})
+			c.JSON(400, gin.H{"error": "Invalid JSON (redirectUri missing)"})
+			return
+		}
+		scopes, ok := data["scopes"].(string)
+		if !ok {
+			c.JSON(400, gin.H{"error": "Invalid JSON (scopes missing)"})
 			return
 		}
 
@@ -1153,9 +1646,9 @@ func main() {
 		}
 
 		var testsecret, testappid string
-		secret, err := genSalt(512)
+		secret, err := randomChars(512)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/newauth secretgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/newauth secretgen:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
 			return
 		}
@@ -1165,23 +1658,23 @@ func main() {
 				if errors.Is(err, sql.ErrNoRows) {
 					break
 				} else {
-					log.Println("[ERROR] Unknown in /api/newauth secretselect at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/newauth secretselect:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETSELECT"})
 					return
 				}
 			} else {
-				secret, err = genSalt(512)
+				secret, err = randomChars(512)
 				if err != nil {
-					log.Println("[ERROR] Unknown in /api/newauth secretgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/newauth secretgen:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-SECRETGEN"})
 					return
 				}
 			}
 		}
 
-		appId, err := genSalt(32)
+		appId, err := randomChars(32)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/newauth appidgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /api/newauth appidgen:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDGEN"})
 			return
 		}
@@ -1193,23 +1686,60 @@ func main() {
 					log.Println("[Info] New Oauth source added with ID:", appId)
 					break
 				} else {
-					log.Println("[ERROR] Unknown in /api/newauth appidcheck at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/newauth appidcheck:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-APPIDCHECK"})
 					return
 				}
 			} else {
-				appId, err = genSalt(32)
+				appId, err = randomChars(32)
 				if err != nil {
-					log.Println("[ERROR] Unknown in /api/newauth appidgen at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/newauth appidgen:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-LAPPIDGEN"})
 					return
 				}
 			}
 		}
 
-		_, err = conn.Exec("INSERT INTO oauth (name, appId, creator, secret, redirectUri) VALUES (?, ?, ?, ?, ?)", name, appId, id, secret, redirectUri)
+		var scopeJson []interface{}
+		err = json.Unmarshal([]byte(scopes), &scopeJson)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /api/newauth insert at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			c.JSON(400, gin.H{"error": "Invalid JSON (scope parsing)"})
+			return
+		}
+
+		var aeskeyshare bool
+		for _, scopeInterface := range scopeJson {
+			scope, ok := scopeInterface.(string)
+			if !ok {
+				c.JSON(400, gin.H{"error": "Invalid JSON (scope interface)"})
+				return
+			}
+			if scope != "openid" && scope != "aeskeyshare" {
+				c.JSON(400, gin.H{"error": "Invalid Scope: " + scope})
+				return
+			} else {
+				if scope == "aeskeyshare" {
+					aeskeyshare = true
+				} else if scope != "openid" {
+					log.Println("[CRITICAL] An impossible logic error has occurred in /api/newauth. Please check if the laws of physics still apply, and if so, please move your computer to a location with less radiation, such as a lead nuclear bunker.")
+					c.JSON(503, gin.H{"error": "The server is unable to handle this request until it is no longer exposed to radiation"})
+					return
+				}
+			}
+		}
+
+		if !aeskeyshare {
+			_, err = conn.Exec("INSERT INTO oauth (name, appId, creator, secret, redirectUri, scopes) VALUES (?, ?, ?, ?, ?, ?)", name, appId, id, secret, redirectUri, scopes)
+		} else {
+			keyShareUri, ok := data["keyShareUri"].(string)
+			if !ok {
+				c.JSON(400, gin.H{"error": "Invalid JSON (keyShareUri)"})
+				return
+			}
+			_, err = conn.Exec("INSERT INTO oauth (name, appId, creator, secret, redirectUri, scopes, keyShareUri) VALUES (?, ?, ?, ?, ?, ?, ?)", name, appId, id, secret, redirectUri, scopes, keyShareUri)
+		}
+		if err != nil {
+			log.Println("[ERROR] Unknown in /api/newauth insert:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-NEWAUTH-INSERT"})
 			return
 		}
@@ -1237,15 +1767,16 @@ func main() {
 			return
 		}
 
-		rows, err := conn.Query("SELECT appId, name, rdiruri FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
+		rows, err := conn.Query("SELECT keyShareUri, scopes, appId, name, redirectUri FROM oauth WHERE creator = ? ORDER BY creator DESC", id)
 		if err != nil {
+			log.Println("[ERROR] Unknown in /api/listauth query:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-QUERY"})
 			return
 		}
 		defer func(rows *sql.Rows) {
 			err := rows.Close()
 			if err != nil {
-				log.Println("[ERROR] Unknown in /api/listauth rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/listauth rows close:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-ROWSCLOSE"})
 				return
 			}
@@ -1253,12 +1784,12 @@ func main() {
 
 		var dataTemplate []map[string]interface{}
 		for rows.Next() {
-			var appId, name, redirectUri string
-			if err := rows.Scan(&appId, &name, &redirectUri); err != nil {
+			var appId, name, redirectUri, scopes, keyShareUri string
+			if err := rows.Scan(&keyShareUri, &scopes, &appId, &name, &redirectUri); err != nil {
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTAUTH-SCAN"})
 				return
 			}
-			template := map[string]interface{}{"appId": appId, "name": name, "redirectUri": redirectUri}
+			template := map[string]interface{}{"appId": appId, "name": name, "redirectUri": redirectUri, "scopes": scopes, "keyShareUri": keyShareUri}
 			dataTemplate = append(dataTemplate, template)
 		}
 		if err := rows.Err(); err != nil {
@@ -1292,7 +1823,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM userdata WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/deleteaccount userdata at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteaccount userdata:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-USERDATA"})
 				return
 			}
@@ -1301,7 +1832,7 @@ func main() {
 		_, err = mem.Exec("DELETE FROM logins WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/deleteaccount logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteaccount logins:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEACCT-LOGINS"})
 				return
 			}
@@ -1310,7 +1841,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM oauth WHERE creator = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/deleteuser oauth at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser oauth:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-OAUTH"})
 				return
 			}
@@ -1319,7 +1850,7 @@ func main() {
 		_, err = conn.Exec("DELETE FROM users WHERE id = ?", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/deleteuser logins at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/deleteuser logins:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-DELETEUSER-USERS"})
 				return
 			}
@@ -1348,10 +1879,10 @@ func main() {
 			return
 		}
 
-		rows, err := conn.Query("SELECT sessionid, session, device FROM sessions WHERE id = ? ORDER BY id DESC", id)
+		rows, err := mem.Query("SELECT sessionid, session, device FROM sessions WHERE id = ? ORDER BY id DESC", id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
-				log.Println("[ERROR] Unknown in /api/sessions/list at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/list:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST"})
 				return
 			}
@@ -1359,7 +1890,7 @@ func main() {
 		defer func(rows *sql.Rows) {
 			err := rows.Close()
 			if err != nil {
-				log.Println("[ERROR] Unknown in /api/sessions/list rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/list rows close:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-LIST-ROWSCLOSE"})
 				return
 			}
@@ -1412,12 +1943,12 @@ func main() {
 			return
 		}
 
-		_, err = conn.Exec("DELETE FROM sessions WHERE sessionid = ? AND id = ?", sessionId, id)
+		_, err = mem.Exec("DELETE FROM sessions WHERE sessionid = ? AND id = ?", sessionId, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				c.JSON(422, gin.H{"error": "SessionID Not found"})
 			} else {
-				log.Println("[ERROR] Unknown in /api/sessions/remove at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+				log.Println("[ERROR] Unknown in /api/sessions/remove:", err)
 				c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-SESSIONS-REMOVE"})
 			}
 		} else {
@@ -1439,11 +1970,11 @@ func main() {
 			return
 		}
 
-		if masterKey == SecretKey {
+		if masterKey == masterKey {
 			rows, err := conn.Query("SELECT * FROM users ORDER BY id DESC")
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
-					log.Println("[ERROR] Unknown in /api/listusers at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/listusers:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-QUERY"})
 					return
 				}
@@ -1451,7 +1982,7 @@ func main() {
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
 				if err != nil {
-					log.Println("[ERROR] Unknown in /api/listusers rows close at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+					log.Println("[ERROR] Unknown in /api/listusers rows close:", err)
 					c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-API-LISTUSERS-ROWSCLOSE"})
 					return
 				}
@@ -1479,14 +2010,14 @@ func main() {
 	router.GET("/.well-known/jwks.json", func(c *gin.Context) {
 		mod, err := BigIntToBase64URL(modulus)
 		if err != nil {
-			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-MODULUS"})
 			return
 		}
 
 		exp, err := Int64ToBase64URL(int64(exponent))
 		if err != nil {
-			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent at", strconv.FormatInt(time.Now().Unix(), 10)+":", err)
+			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent:", err)
 			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-EXPONENT"})
 			return
 		}
@@ -1496,7 +2027,7 @@ func main() {
 					"kty": "RSA",
 					"alg": "RS256",
 					"use": "sig",
-					"kid": keyid,
+					"kid": keyIdentifier,
 					"n":   mod,
 					"e":   exp,
 				},
@@ -1506,10 +2037,29 @@ func main() {
 		c.JSON(200, keys)
 	})
 
-	log.Println("[INFO] Server started at", time.Now().Unix())
-	log.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + Host + " on port " + strconv.Itoa(Port) + ".")
-	err = router.Run(Host + ":" + strconv.Itoa(Port))
+	go func() {
+		for {
+			time.Sleep(time.Minute)
+			var count int
+			err := mem.QueryRow("SELECT COUNT(*) FROM spent").Scan(&count)
+			affected, err := mem.Exec("DELETE FROM spent WHERE expires < ?", time.Now().Unix())
+			if err != nil {
+				log.Println("[ERROR] Unknown in spent cleanup Exec():", err)
+			} else {
+				affectedRows, err := affected.RowsAffected()
+				if err != nil {
+					log.Println("[ERROR] Unknown in spent cleanup RowsAffected():", err)
+				} else {
+					log.Println("[INFO] Spent cleanup complete, deleted " + strconv.FormatInt(affectedRows, 10) + " row(s), " + strconv.Itoa(count) + " row(s) remaining.")
+				}
+			}
+		}
+	}()
+
+	log.Println("[INFO] Server started")
+	log.Println("[INFO] Welcome to Burgerauth! Today we are running on IP " + host + " on port " + strconv.Itoa(port) + ".")
+	err = router.Run(host + ":" + strconv.Itoa(port))
 	if err != nil {
-		log.Fatalln("[FATAL] Server failed to begin operations at", time.Now().Unix(), err)
+		log.Fatalln("[FATAL] Server failed to begin operations")
 	}
 }

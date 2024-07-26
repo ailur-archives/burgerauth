@@ -11,8 +11,11 @@ PRIVATE_KEY = keys/private.pem
 # This is the URI to the privacy policy. Leave as default to use the default burgerauth policy.
 PRIVACY_POLICY = https://concord.hectabit.org/Paperwork/Burgerauth/src/commit/3a58ec33ead87aadd542c5838b3162ed6cedc044/Privacy.md
 # This is the URL the server is running on. Change this to your URL. This must be the URL in front of your reverse-proxy, and should not be an IP as to enforce HTTPS.
-URL = https://auth.hectabit.org
+URL = https://example.org
 # This is the name of the program you wish users to see.
 IDENTIFIER = Burgerauth
 # This is the identifier for your key in JWK. It is ok to set it to a random string of characters.
 KEY_ID = burgerauth
+# Serious mode disables marketing, fancy HTML front-pages, easter eggs and basically everything that does not belong in a professional environment. I recommend enabling this if you want to self-host an instance.
+SERIOUS_MODE = false
+# The mode does not affect the API or functionality, only changing a couple appearances and logs.
