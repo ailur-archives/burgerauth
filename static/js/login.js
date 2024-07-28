@@ -194,7 +194,7 @@ nextButton.addEventListener("click", async () => {
                     }))
 
                     statusBox.innerText = "Migrating password..."
-                    let status = await migrateLegacyPassword(loginDataOld["key"], hashedPass)
+                    let status = await migrateLegacyPassword(loginDataOld["key"], hashedPassword)
                     if (status.status === 200) {
                         statusBox.innerText = "Welcome back!"
                         await new Promise(r => setTimeout(r, 200))
