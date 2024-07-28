@@ -168,7 +168,7 @@ nextButton.addEventListener("click", async () => {
                     method: "POST",
                     body: JSON.stringify({
                         username: username,
-                        password: hashpassold(password),
+                        password: await hashpassold(password),
                         modern: false
                     }),
                     headers: {

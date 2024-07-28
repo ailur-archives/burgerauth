@@ -52,12 +52,12 @@ function oauth() {
     const expireTime = now.getTime() + (21 * 1000);
     let expires = new Date(expireTime).toUTCString();
     if (navigator.cookieEnabled) {
-        document.cookie = "DONOTSHARE-secretkey=" + secret_key + "; expires=" + expires + "; path=/";
+        document.cookie = "session=" + secret_key + "; expires=" + expires + "; path=/";
         window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce + "&deny=false");
     } else {
         document.getElementById("statusBox").textContent = "Warning! Because cookies are disabled, your access token is sent directly in the URL. This is less secure than using cookies, but you chose this path!";
         setTimeout(() => {
-            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce + "&deny=false&access_token=" + secret_key);
+            window.location.replace("/api/auth?client_id=" + client_id + "&redirect_uri=" + redirect_uri + "&code_challenge_method=" + codemethod + "&code_challenge=" + code + "&state=" + state + "&nonce=" + nonce + "&deny=false&session=" + secret_key);
         }, 200);
     }
 }

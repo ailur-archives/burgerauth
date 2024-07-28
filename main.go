@@ -1325,7 +1325,7 @@ func main() {
 		state := c.Request.URL.Query().Get("state")
 		nonce := c.Request.URL.Query().Get("nonce")
 		deny := c.Request.URL.Query().Get("deny")
-		sessionKey, err := c.Cookie("secretKey")
+		sessionKey, err := c.Cookie("session")
 		if err == nil {
 			if errors.Is(err, http.ErrNoCookie) || sessionKey == "" {
 				sessionKey = c.Request.URL.Query().Get("session")
