@@ -1326,15 +1326,15 @@ func main() {
 		nonce := c.Request.URL.Query().Get("nonce")
 		deny := c.Request.URL.Query().Get("deny")
 		sessionKey, err := c.Cookie("session")
-		if err == nil {
+		if err != nil {
 			if errors.Is(err, http.ErrNoCookie) || sessionKey == "" {
 				sessionKey = c.Request.URL.Query().Get("session")
 				if sessionKey == "" {
-					c.String(400, "Invalid session")
+					c.String(400, "Invalid session (no cookie or session url)")
 					return
 				}
 			} else {
-				c.String(400, "Invalid session")
+				c.String(400, "Invalid session (failed to fetch cookie)")
 				return
 			}
 		}
@@ -1344,7 +1344,6 @@ func main() {
 		err = conn.QueryRow("SELECT scopes, appId, redirectUri FROM oauth WHERE appId = ? LIMIT 1", appId).Scan(&scopes, &appIdCheck, &redirectUriCheck)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				fmt.Println(appId)
 				c.String(401, "OAuth screening failed")
 			} else {
 				log.Println("[ERROR] Unknown in /api/auth:", err)
@@ -1383,7 +1382,6 @@ func main() {
 		}
 
 		if !(appIdCheck == appId) {
-			fmt.Println(appIdCheck, appId)
 			c.String(401, "OAuth screening failed")
 			return
 		}
@@ -1399,7 +1397,7 @@ func main() {
 
 		_, userid, err := getSession(sessionKey)
 		if err != nil {
-			c.String(401, "Invalid session")
+			c.String(401, "Invalid session (token not found in database)")
 			return
 		}
 
