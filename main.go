@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/catalinc/hashcash"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/viper"
