@@ -3,20 +3,18 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,8 +24,8 @@ import (
 	"time"
 
 	"github.com/catalinc/hashcash"
-	"github.com/golang-jwt/jwt"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/scrypt"
@@ -36,10 +34,8 @@ import (
 var (
 	conn       *sql.DB
 	mem        *sql.DB
-	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
-	modulus    *big.Int
-	exponent   int
+	privateKey ed25519.PrivateKey
+	publicKey  ed25519.PublicKey
 )
 
 func ensureTrailingSlash(url string) string {
@@ -47,29 +43,6 @@ func ensureTrailingSlash(url string) string {
 		return url + "/"
 	}
 	return url
-}
-
-func Int64ToBase64URL(num int64) (string, error) {
-	numBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(numBytes, uint64(num))
-	startIndex := 0
-	for startIndex < len(numBytes) && numBytes[startIndex] == 0 {
-		startIndex++
-	}
-	trimmedBytes := numBytes[startIndex:]
-	encoded := base64.URLEncoding.EncodeToString(trimmedBytes)
-	return encoded, nil
-}
-
-func BigIntToBase64URL(num *big.Int) (string, error) {
-	numBytes := num.Bytes()
-	startIndex := 0
-	for startIndex < len(numBytes) && numBytes[startIndex] == 0 {
-		startIndex++
-	}
-	trimmedBytes := numBytes[startIndex:]
-	encoded := base64.URLEncoding.EncodeToString(trimmedBytes)
-	return encoded, nil
 }
 
 const saltChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -402,7 +375,7 @@ func main() {
 				log.Println("[INFO] Key pair not found. Obviously someone hasn't read the README. I guess I'll have to do everything myself :P")
 			}
 
-			tempPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+			tempPublicKey, tempPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				log.Fatalln("[ERROR] Cannot generate private key:", err)
 			}
@@ -412,18 +385,16 @@ func main() {
 				log.Fatalln("[ERROR] Cannot marshal private key:", err)
 			}
 			privateKeyFile = pem.EncodeToMemory(&pem.Block{
-				Type:  "RSA PRIVATE KEY",
+				Type:  "ED25519 PRIVATE KEY",
 				Bytes: privateKeyBytes,
 			})
-
-			tempPublicKey := tempPrivateKey.Public()
 
 			publicKeyBytes, err := x509.MarshalPKIXPublicKey(tempPublicKey)
 			if err != nil {
 				log.Fatalln("[ERROR] Cannot marshal public key:", err)
 			}
 			pubKeyFile = pem.EncodeToMemory(&pem.Block{
-				Type:  "RSA PUBLIC KEY",
+				Type:  "ED25519 PUBLIC KEY",
 				Bytes: publicKeyBytes,
 			})
 
@@ -466,15 +437,15 @@ func main() {
 		log.Fatalln("[ERROR] Failed to parse PEM block containing the private key")
 	}
 
-	privateKeyRaw, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	privateKeyBytes, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
 		log.Fatalln("[ERROR] Failed to parse private key:", err)
 	}
 
 	var ok bool
-	privateKey, ok = privateKeyRaw.(*rsa.PrivateKey)
+	privateKey, ok = privateKeyBytes.(ed25519.PrivateKey)
 	if !ok {
-		log.Fatalln("[ERROR] Failed to convert private key to RSA private key")
+		log.Fatalln("[ERROR] Failed to parse private key")
 	}
 
 	pubKeyFile, err = os.ReadFile(publicKeyPath)
@@ -487,18 +458,15 @@ func main() {
 		log.Fatalln("[ERROR] Failed to parse PEM block containing the public key")
 	}
 
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	publicKeyBytes, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		log.Fatalln("[ERROR] Failed to parse public key:", err)
 	}
 
-	publicKey, ok = pubKey.(*rsa.PublicKey)
+	publicKey, ok = publicKeyBytes.(ed25519.PublicKey)
 	if !ok {
-		log.Fatalln("[ERROR] Failed to convert public key to RSA public key")
+		log.Fatalln("[ERROR] Failed to parse public key")
 	}
-
-	modulus = privateKey.N
-	exponent = privateKey.E
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -562,8 +530,9 @@ func main() {
 				if err != nil {
 					log.Println("[ERROR] Unknown in /testapp createTestApp():", err)
 					c.String(500, "Something went wrong on our end. Please report this bug at https://centrifuge.hectabit.org/hectabit/burgernotes and refer to the documentation for more info. Your error code is: UNKNOWN-TESTAPP-CREATE")
+				} else {
+					c.HTML(200, "refresh.html", gin.H{})
 				}
-				c.HTML(200, "refresh.html", gin.H{})
 				return
 			} else {
 				log.Println("[ERROR] Unknown in /testapp:", err)
@@ -1424,7 +1393,7 @@ func main() {
 				"session":   sessionKey,
 				"nonce":     nonce,
 			}
-			tokenTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplate)
+			tokenTemp := jwt.NewWithClaims(jwt.SigningMethodEdDSA, dataTemplate)
 			tokenTemp.Header["kid"] = "burgerauth"
 			jwtToken, err = tokenTemp.SignedString(privateKey)
 			if err != nil {
@@ -1443,7 +1412,7 @@ func main() {
 			"aud":     appId,
 		}
 
-		secretTemp := jwt.NewWithClaims(jwt.SigningMethodRS256, dataTemplateTwo)
+		secretTemp := jwt.NewWithClaims(jwt.SigningMethodEdDSA, dataTemplateTwo)
 		secretTemp.Header["kid"] = "burgerauth"
 		secretToken, err := secretTemp.SignedString(privateKey)
 		if err != nil {
@@ -2006,28 +1975,15 @@ func main() {
 	})
 
 	router.GET("/.well-known/jwks.json", func(c *gin.Context) {
-		mod, err := BigIntToBase64URL(modulus)
-		if err != nil {
-			log.Println("[ERROR] Unknown in /well-known/jwks.json modulus:", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-MODULUS"})
-			return
-		}
-
-		exp, err := Int64ToBase64URL(int64(exponent))
-		if err != nil {
-			log.Println("[ERROR] Unknown in /well-known/jwks.json exponent:", err)
-			c.JSON(500, gin.H{"error": "Something went wrong on our end. Please report this bug at https://concord.hectabit.org/hectabit/burgerauth and refer to the docs for more info. Your error code is: UNKNOWN-JWKS-EXPONENT"})
-			return
-		}
 		keys := gin.H{
 			"keys": []gin.H{
 				{
-					"kty": "RSA",
-					"alg": "RS256",
+					"kty": "OKP",
+					"alg": "EdDSA",
 					"use": "sig",
 					"kid": keyIdentifier,
-					"n":   mod,
-					"e":   exp,
+					"x":   base64.RawURLEncoding.EncodeToString(publicKey),
+					"crv": "Ed25519",
 				},
 			},
 		}
